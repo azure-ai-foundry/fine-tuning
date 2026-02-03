@@ -1,0 +1,19 @@
+# Azure AI Foundry SDK
+azure-ai-projects>=2.0.0b1
+
+# Azure Authentication
+azure-identity
+
+# Azure Cognitive Services for model deployment
+azure-mgmt-cognitiveservices
+
+# OpenAI SDK (obtained via Foundry client)
+openai
+
+# Data manipulation and visualization
+pandas
+matplotlib
+numpy
+
+# Core utilities
+python-dotenv
