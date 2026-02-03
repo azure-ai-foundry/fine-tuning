@@ -1,126 +1,152 @@
-# Distilling Sarcasm
-> or: "how to teach GPT-4.1-nano how to be sarcastic"
+# Distilling Sarcasm - Foundry SDK Version
 
-This is an end-to-end example of **distillation**: squeezing the behaviors of a
-larger model into a smaller model.
+This is an alternative implementation of the Sarcasm distillation demo using the **Azure AI Foundry SDK** instead of raw API keys.
 
-## tl;dr
+## Overview
 
-1. Go spin up base model deployments for all models you want to work with. In
-   this notebook, I use o3, o4-mini, gpt-4.1, gpt-4.1-mini, gpt-4.1-nano,
-   gpt-4o, and gpt-4o-mini. You might need TPM quota in your subscription.
+This demo teaches language models to generate sarcastic responses through distillation:
+1. A **teacher model** (gpt-4.1) generates sarcastic training data
+2. A **student model** (gpt-4.1-mini) is fine-tuned on this data
+3. Evaluators measure sarcasm quality before and after training
 
-2. Create and populate a `.env` file to simplify stuff. In it, put some Azure
-   specific details:
+## SDK Comparison
 
-```properties
-AZURE_OPENAI_ENDPOINT=https://<YOUR OWN ENDPOING>.openai.azure.com
-AZURE_OPENAI_API_KEY=<YOUR AZURE OPENAI KEY>
-AZURE_SUBSCRIPTION_ID=<YOUR AZURE SUBSCRIPTION ID>
-AZURE_RESOURCE_GROUP=<YOUR AZURE RESOURCE GROUP>
-AZURE_AOAI_ACCOUNT=<YOUR AZURE OPENAI ACCOUNT NAME>
+| Aspect | Original (API Key) | This Version (Foundry SDK) |
+|--------|-------------------|---------------------------|
+| **Package** | `openai` | `azure-ai-projects` + `openai` |
+| **Auth** | API Key | `DefaultAzureCredential` |
+| **Inference** | `client.chat.completions.create()` | `openai_client.chat.completions.create()` |
+| **Evaluations** | `client.evals.*` | `openai_client.evals.*` (same!) |
+| **Fine-tuning** | `client.fine_tuning.jobs.*` | `openai_client.fine_tuning.jobs.*` (same!) |
+
+**Key Insight**: The APIs are nearly identical! The main difference is how you get the client:
+
+```python
+# Original (API Key)
+client = OpenAI(base_url=..., api_key=...)
+
+# Foundry SDK
+project_client = AIProjectClient(endpoint=..., credential=DefaultAzureCredential())
+openai_client = project_client.get_openai_client()  # Same API from here!
 ```
 
-3. Wrangle the Python stuff. (See below.)
+## Prerequisites
 
+1. **Azure Subscription** with access to Azure AI Foundry
+2. **Python 3.10+**
+3. **Azure CLI** logged in (`az login`)
+
+## Setup
+
+1. Create and activate a virtual environment:
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate  # Linux/Mac
+   # or: .venv\Scripts\activate  # Windows
+   ```
+
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. Copy the environment template and fill in your values:
+   ```bash
+   cp .env.template .env
+   ```
+
+4. Configure `.env`:
+   ```
+   MICROSOFT_FOUNDRY_PROJECT_ENDPOINT=https://<resource>.services.ai.azure.com/api/projects/<project>
+   AZURE_INFERENCE_ENDPOINT=https://<deployment>.<region>.models.ai.azure.com
+   AZURE_OPENAI_DEPLOYMENT=gpt-4.1
+   AZURE_SUBSCRIPTION_ID=<your-subscription>
+   AZURE_RESOURCE_GROUP=<your-rg>
+   AZURE_AOAI_ACCOUNT=<your-account>
+   BASE_MODEL=gpt-4.1-mini
+   TEACHER_MODEL=gpt-4.1
+   ```
+
+## Running the Demo
+
+Open `sarcasm_foundry.ipynb` in Jupyter and execute cells in order:
+
+```bash
+jupyter notebook sarcasm_foundry.ipynb
 ```
-$ python3 -m venv .venv
-$ . .venv/bin/activate
-(venv) $ pip install -r requirements
+
+## Key Differences from Original
+
+### Authentication
+```python
+# Original (API Key)
+client = OpenAI(
+    base_url=f"https://{resource}.openai.azure.com/openai/v1/",
+    api_key=os.environ.get("FOUNDRY_API_KEY"),
+)
+
+# Foundry SDK (Azure Credential)
+credential = DefaultAzureCredential()
+project_client = AIProjectClient(endpoint=endpoint, credential=credential)
+openai_client = project_client.get_openai_client()
 ```
 
-Then launch this sucker in Jupyter notebooks. The easiest way is to fire it up
-in **Visual Studio Code**:
+### Inference
+```python
+# Original (OpenAI SDK)
+response = client.chat.completions.create(
+    model="gpt-4.1",
+    messages=[{"role": "user", "content": "Hello"}]
+)
 
+# Foundry SDK (azure-ai-inference)
+from azure.ai.inference import ChatCompletionsClient
+from azure.ai.inference.models import UserMessage
+
+client = ChatCompletionsClient(endpoint=..., credential=credential)
+response = client.complete(messages=[UserMessage(content="Hello")])
 ```
-$ code sarcasm.ipynb
+
+### Evaluations (Same API!)
+```python
+# Both demos use identical evals API
+eval = openai_client.evals.create(name="sarcasm-grader", ...)
+run = openai_client.evals.runs.create(eval_id=eval.id, ...)
 ```
 
-Happy distilling. 🧪
+### Trade-offs
 
-## Background
-The basis for this demo is the Distillation [demo](https://github.com/azure-ai-foundry/build-2025-demos/blob/main/Azure%20AI%20Model%20Customization/DistillationDemo/demo.ipynb)
-featured at Build 2025:
+**Foundry SDK Advantages:**
+- ✅ No API keys to manage (uses Azure managed identity)
+- ✅ Better security with DefaultAzureCredential
+- ✅ Consistent with other Azure AI services
+- ✅ Unified project management
 
-And the [tutorial](https://learn.microsoft.com/en-us/azure/ai-services/openai/tutorials/fine-tune)
-on fine-tuning gpt-4o with the prompt:
-_Clippy is a factual chatbot that is also sarcastic._
-
-## Grader
-We use a crude grader that rewards two things:
-
-1. The amount of sarcasm from 1 (no sarcasm) to 10 (the most sarcasm)
-2. Correct answers to the users questions.
-
-More importantly, it *heavily* penalizes wrong answers by driving the scores to
-zero. In practice, I don't think I saw this happen, but it's a fun example.
-
-We leave it to **o3** to decide what we mean by sarcasm 😜
-
-## Methodology
-More will be written here, but at a high-level the approach takes a few steps.
-
-For now, just read the [notebook](./sarcasm.ipynb) 😉
-
-### 0. Assemble Human Curated Data
-We need something of a "gold standard." In this case, we use some pre-canned
-examples from the Azure OpenAI docs.
-
-### 1. Build & Test our Grader
-We assemble a Grader: a combination of model (o3) and a prompt. The prompt
-tells the grader how to score other models' output.
-
-### 2. Benchmark our Base Models
-We use the "gold standard" to check if our Grader is doing its job. If we can't
-trust the grader, who can we trust?
-
-### 3. Pick our Teacher and our Student
-We then give an assignment to our base models (`o3`, `o4-mini`, `4.1-*`, 
-`4o-*`) and have the Grader decide on their scores.
-
-We use these scores to determine which base model shows the most aptitude
-for our use case. That model we pick as our Teacher.
-
-We also figure out who our Student should be based on which model performs the
-worst...yet might be much cheaper to use than our Teacher. (We're on a fixed
-budget!)
-
-### 4. Distill from the Teacher
-We take the Teacher's answers to the questions and consider them what the
-Student needs to learn. We turn them into our training data for fine-tuning.
-
-### 5. Train our Student
-The Student gets to work learning by studying the Teacher's output.
-
-### 6. Test our Student against its Peer
-Now, to keep things fair, we take _new_ data and ask the Student to generate
-responses. We also ask its peer, the un-trained version of itself, to do the
-same. We then compare the two.
-
-### 7. Celebrate or Cry
-If our Student bests the Peer, we celebrate! Our job is done.
-
-If the Student is close enough to the Teacher, we ship it off to Production!
+**Original (API Key) Advantages:**
+- ✅ Simpler setup (just one API key)
+- ✅ Works outside Azure environments
+- ✅ Familiar OpenAI SDK patterns
 
 ## Troubleshooting
 
-### Common Issues
+### Authentication Issues
+- Ensure you're logged in: `az login`
+- Check your role assignments include "Azure AI User" on the Foundry resource
 
-**Authentication Error**
-- Run `az login` to refresh your Azure credentials
-- Verify your Azure OpenAI endpoint and API key in `.env`
-- Check that you have deployment access for all models (o3, o4-mini, gpt-4.1, etc.)
+### Model Not Found
+- Verify the model deployment names in your `.env` match your Azure deployments
 
-**Quota Exceeded**
-- This demo uses multiple model deployments - ensure you have TPM quota for each
-- Request additional quota in Azure Portal → Azure OpenAI → Quotas
-- Try running with fewer models if quota is limited
+### Rate Limiting
+- Reduce `sample_size` in evaluation cells if hitting rate limits
 
-**Model Not Available**
-- Check regional availability for gpt-4.1-nano and other newer models
-- Some models may require preview access - check Azure documentation
+## Files
 
-**Training Job Fails**
-- Verify data format matches the expected JSONL schema
-- Ensure training data doesn't exceed token limits
-- Check that grader outputs are valid JSON
+- `sarcasm_foundry.ipynb` - Main notebook
+- `requirements.txt` - Python dependencies
+- `.env.template` - Environment variable template
+- `README.md` - This file
+
+## Related
+
+- [Original Sarcasm Demo](../DistillingSarcasm/) - Uses OpenAI SDK with API keys
+- [CNN DailyMail Demo](../SFT_CNN_DailyMail/) - SFT example using Foundry SDK
