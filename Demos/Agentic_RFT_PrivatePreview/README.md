@@ -239,3 +239,7 @@ For worked examples of using these features, see these demos in our repo:
 - [Endpoint Grader sample](./RFT_EndpointGrader/)
 - [Simple Tool calling in RFT](./RFT_ToolCall/)
 - [An E2E Agentic RFT sample - Ignite Zava Demo](../ZavaRetailAgent/)
+
+## Best Practices
+
+Based on our customer support experience, we've published [a set of Best Practices](./RFT_Best_Preactice.md) to help you get the most out of Reinforcement Fine-Tuning.
