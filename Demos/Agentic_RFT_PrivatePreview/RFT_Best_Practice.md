@@ -59,7 +59,13 @@ Instead, build tools that reflect the full decision-making cycle your task requi
 
 ### Monitor eval metrics and outputs to detect reward hacking
 
-Don’t wait for final scores — inspect outputs and evaluation metrics **throughout training**. If scores improve while visible output quality degrades, or if the model produces responses that “match” the grader without performing the intended behavior (such as a semantically incorrect tool call that still passes pattern checks), you may be seeing reward hacking. Use held out evaluation sets with diverse, real world inputs to catch these failures early, and—when tool calling accuracy is the goal—explicitly verify that the model is emitting well formed, semantically correct tool calls.
+Don't wait for final scores — inspect outputs and evaluation metrics **throughout training**. You can monitor intermediate results in the **Metrics** tab on the fine-tuning job detail page in Foundry, which shows eval scores at each checkpoint. 
+
+If scores improve while visible output quality degrades, or if the model produces responses that "match" the grader without performing the intended behavior (such as a semantically incorrect tool call that still passes pattern checks), you may be seeing reward hacking. 
+
+Use held out evaluation sets with diverse, real world inputs to catch these failures early.
+
+When tool calling accuracy is the goal, explicitly verify that the model is emitting well formed, semantically correct tool calls.
 
 ## Common User Errors
 
