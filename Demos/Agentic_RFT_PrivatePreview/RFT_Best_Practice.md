@@ -2,6 +2,14 @@
 
 This document provides best practices to help customers successfully apply Reinforcement Fine‑Tuning (RFT) to improve model performance on well‑defined, objectively scorable tasks.
 
+## Table of Contents
+
+- [When to Use RFT](#when-to-use-rft)
+- [Getting Started](#getting-started)
+- [Common User Errors](#common-user-errors)
+- [Advanced Scenarios](#advanced-scenarios)
+
+
 ## When to Use RFT
 
 Use Reinforcement Fine-Tuning (RFT) to improve **reasoning accuracy and decision quality** in tasks where outputs can be **clearly evaluated and scored**.
@@ -23,51 +31,31 @@ Start by clearly stating the task and what success looks like, then design a gra
 
 Before training, run a baseline evaluation using your grader on a small set of examples—typically **10–100 samples**—so you understand starting performance and can measure real improvement.
 
-A good starting point is evaluating a base model (for example, GPT‑5.x) and experimenting with system prompts to reach the best possible performance before fine-tuning.
+A good starting point is evaluating a base model (for example, GPT‑5.x) and experimenting with system prompts to reach the best possible performance before fine-tuning. Learn more about [Foundry Evaluation](https://learn.microsoft.com/en-us/azure/foundry/how-to/evaluate-generative-ai-app). [ZavaRetailAgent](../ZavaRetailAgent/) is an E2E sample from setting up baseline of base model to SFT, and then to RFT.
 
-### Prefer Deterministic Graders
-
-When possible, use deterministic checks such as:
-- String validation
-- Code or Python-based graders
-- Endpoint-based graders
-
-Validate graders on **diverse, real‑world inputs**, not only synthetic data.
-
-### Start Small
-
-Begin with:
-- Small datasets (10–100 samples)
-- Simple graders
-- Low epoch counts
-
-A practical workflow is to start with **o4‑mini RFT** to validate the end‑to‑end setup and grader behavior, then graduate to **GPT‑5 RFT** once the reward signal and training loop look healthy.
-
-## Optimizing Quality
-
-### Invest in Grader Quality
+### Design Effective Graders
 
 The grader is the primary driver of RFT success. Invest disproportionate effort in getting it right.
 
-Aim for rewards that are **well‑distributed**:
-- Rewards that are too sparse or too uniform produce weak learning signals
-- Weak signals limit model improvement
+- **Use the simplest grader that works**: If validating an exact match answer (for example, a number or multiple‑choice letter), use a **string‑match grader** rather than a model‑based or Python grader — even if those alternatives could also work.
+- **Prefer deterministic checks**: String validation, code or Python‑based graders, and endpoint‑based graders are more reliable than model‑based grading.
+- **Aim for well‑distributed rewards**: Rewards that are too sparse or too uniform produce weak learning signals that limit model improvement.
+- **Validate on diverse, real‑world inputs**: Use [Foundry evaluations](https://learn.microsoft.com/en-us/azure/foundry/how-to/evaluate-generative-ai-app) to test graders on existing datasets to ensure they behave as expected.
 
-You can use Foundry evaluations to test graders on existing datasets to ensure they behave as expected.
+### Start Small and Iterate
+
+Begin with small datasets (10–100 samples), simple graders, and low epoch counts. A practical workflow is to start with **o4‑mini RFT** to validate the end‑to‑end setup and grader behavior, then graduate to **GPT‑5 RFT** once the reward signal and training loop look healthy.
 
 ### Tune Training Parameters
 
-Expect the `epoch count` and `compute_multiplier` to have most impact on quality.
+Expect `epoch count` and `compute_multiplier` to have the most impact on quality. Change **one variable at a time** so gains or regressions can be clearly attributed.
 
-Change **one variable at a time** and iterate systematically so gains or regressions can be clearly attributed.
+### Build Scenario-Specific Tools for Complete Workflows
 
-### Use the Simplest Grader That Works
+Don't reuse existing tools that only cover part of your workflow. If a tool wasn't designed for your specific scenario, it may skip critical steps and give the model an incomplete learning signal.
 
-If validating an exact match answer (for example, a number or multiple‑choice letter), use a **string‑match grader** rather than a model‑based or Python grader - even if those alternatives could also work.
+Instead, build tools that reflect the full decision-making cycle your task requires: For example, an automatic escalation workflow shouldn't just have a tool to trigger escalation — it also needs a tool to check recipient availability first. Without that step, the model never learns when escalation is appropriate, only how to fire it.
 
-### Design Graders and Tools Intentionally
-
-Avoid force fitting existing tools or endpoints into a grader if they weren’t built to produce high signal feedback. Instead, design tools specifically to generate accurate, learning useful signals, and create new tools when necessary to support effective training. For example, automatic escalation workflows benefits from having a tool call to check recipient availability before triggering an escalation.
 
 ### Monitor eval metrics and outputs to detect reward hacking
 
@@ -77,7 +65,7 @@ Don’t wait for final scores — inspect outputs and evaluation metrics **throu
 
 ### Improperly Formatted Data
 
-RFT requires data to be in a specific format – RFT requires that the final message in a line can only be “User” or “Developer” role. 
+RFT requires data to be in a specific format – RFT requires that the final message in a line can only be “User” or “Developer” role.
 
 For example, in **SFT** (supervised fine-tune), you might have a data row look like this where final message is “Assistant” role:
 
@@ -192,7 +180,7 @@ Here is an example of a data row, response format, and grader that agree. Note t
 
 ```json
 {
-    "type": "json_schema"
+    "type": "json_schema",
     "json_schema": {
         "name": "response",
         "strict": true,
@@ -203,13 +191,13 @@ Here is an example of a data row, response format, and grader that agree. Note t
                     "type": "string",
                 },
                 "population": {
-                    "tile": "Population",
+                    "title": "Population",
                     "type": "string"
                 }
             },
             "title": "CapitalData",
             "type": "object",
-            "additionalPropertises": false
+            "additionalProperties": false
         }
     }  
 }
@@ -233,7 +221,3 @@ RFT pipeline supports tool use through function-calling, however MCP is preferre
 ### Grader Robustness and Reward Integrity
 
 Bad graders can lead models to learn shortcuts (reward hacking). Don’t grade only the final text, grade the tool trace and verify outcomes. In practice that means giving partial credit (outcome vs. tool use vs. safety), explicitly requiring critical steps (for example, lookups before writes), and keeping grading deterministic so improvements reflect policy changes , not grader noise.
-
-## Key Guidance
-
-RFT is most effective when applied to **well‑defined, objectively scorable tasks** with **high‑quality graders**. Start small, validate early with lightweight models, and scale only after the reward signal and training setup are proven.
