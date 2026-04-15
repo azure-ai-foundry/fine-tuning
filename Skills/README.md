@@ -45,6 +45,12 @@ Required Python packages:
 pip install openai azure-identity tiktoken requests
 ```
 
+Optional (for specific workflows):
+```bash
+pip install pandas pyarrow    # Dataset conversion and statistics
+pip install azure-ai-evaluation azure-ai-projects  # Azure AI Evaluation SDK integration
+```
+
 ### 3. Start fine-tuning
 
 Tell your agent something like:
@@ -115,7 +121,7 @@ Skills/
 | Model | SFT | DPO | RFT | Vision | Notes |
 |-------|-----|-----|-----|--------|-------|
 | gpt-4.1-mini | ✅ | ✅ | ❌ | ❌ | Best general-purpose FT model |
-| gpt-4.1-nano | ✅ | ✅ | ❌ | ❌ | Best for distillation targets |
+| gpt-4.1-nano | ✅ | ❌ | ❌ | ❌ | Best for distillation targets |
 | gpt-4o | ✅ | ✅ | ❌ | ✅ | Vision fine-tuning supported |
 | gpt-4.1 | ✅ | ✅ | ❌ | ✅ | Vision fine-tuning supported |
 | o4-mini | ❌ | ❌ | ✅ | ❌ | RFT with graders |

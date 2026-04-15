@@ -138,11 +138,16 @@ def dpo_to_sft(input_path, output_path, system_prompt=None):
     with open(output_path, "w", encoding="utf-8") as f:
         for line in open(input_path):
             ex = json.loads(line)
+            input_messages = ex["input"]["messages"]
+            chosen_messages = ex["preferred_output"]
+
             messages = []
             if system_prompt:
                 messages.append({"role": "system", "content": system_prompt})
-            messages.extend(ex["prompt"])
-            messages.extend(ex["chosen"])
+                messages.extend(m for m in input_messages if m["role"] != "system")
+            else:
+                messages.extend(input_messages)
+            messages.extend(chosen_messages)
             f.write(json.dumps({"messages": messages}, ensure_ascii=False) + "\n")
             count += 1
     print(f"Extracted {count} chosen examples to SFT JSONL → {output_path}")

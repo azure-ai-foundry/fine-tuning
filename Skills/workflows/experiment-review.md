@@ -36,7 +36,7 @@ Run evaluation comparing the fine-tuned model against the base model (and teache
 # For SFT / distillation
 python scripts/evaluate_model.py \
   --base-url "$BASE_URL" --api-key "$API_KEY" \
-  --model "<ft-deployment>" --test-file "<test.jsonl>" \
+  --deployment-name "<ft-deployment>" --test-file "<test.jsonl>" \
   --judge-model "gpt-4.1-mini"
 
 # For RFT (math / code)
@@ -118,8 +118,8 @@ When: Training curves suggest wrong LR or epochs.
 ```bash
 python scripts/submit_training.py \
   --base-url "$BASE_URL" --api-key "$API_KEY" \
-  --model "<base-model>" --train-file "<train.jsonl>" \
-  --val-file "<val.jsonl>" --epochs <N> --lr <multiplier> \
+  --model "<base-model>" --training-file "<train.jsonl>" \
+  --validation-file "<val.jsonl>" --epochs <N> --lr <multiplier> \
   --suffix "<experiment-name>"
 ```
 Common adjustments:
@@ -168,7 +168,7 @@ Stop iterating when:
 - Marginal improvement < 2% across last 2 experiments
 - You've exhausted reasonable hyperparameter space
 - Cost of further experiments exceeds value of improvement
-- Base model is already near-ceiling for the task (DPO peacemaker case)
+- Base model is already near-ceiling for the task (e.g., DPO on an already-strong base model)
 
 ## Lessons Learned from Production Fine-Tuning
 

@@ -5,7 +5,7 @@ Supports all model families with correct format/SKU mapping.
 
 Usage:
   python deploy_model.py --model-id "ft:gpt-4.1-mini-2025-04-14:..." --name "my-ft-eval" --capacity 100
-  python deploy_model.py --model-id "ft:gpt-oss-20b-11:..." --name "oss-eval" --format oss-20b --sku GlobalStandard
+  python deploy_model.py --model-id "ft:gpt-oss-20b-11:..." --name "oss-eval" --format Microsoft --sku GlobalStandard
   python deploy_model.py --delete --name "my-ft-eval"
   python deploy_model.py --list
 """
@@ -41,7 +41,7 @@ if not AZ_CLI:
 
 # Model format auto-detection rules
 FORMAT_RULES = [
-    (lambda m: "oss-20b" in m or "oss20b" in m, "oss-20b", "GlobalStandard"),
+    (lambda m: "oss-20b" in m or "oss20b" in m, "Microsoft", "GlobalStandard"),
     (lambda m: "ministral" in m.lower() or "mistral" in m.lower(), "Mistral AI", "GlobalStandard"),
     (lambda m: "llama" in m.lower() or "meta" in m.lower(), "Meta", "GlobalStandard"),
     (lambda m: "qwen" in m.lower() or "alibaba" in m.lower(), "Alibaba", "GlobalStandard"),

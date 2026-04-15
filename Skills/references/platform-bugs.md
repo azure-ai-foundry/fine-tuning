@@ -117,5 +117,3 @@ These aren't bugs — they're common stumbling blocks when using Azure AI Foundr
   - OSS jobs succeeded because they were submitted via REST to the correct endpoint path
 
 ---
-
-_Last updated: Corrected Bug #12 (was user error, not platform)_

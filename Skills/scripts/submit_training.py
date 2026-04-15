@@ -190,9 +190,11 @@ def main():
                 method={
                     "type": "dpo",
                     "dpo": {
-                        "n_epochs": args.epochs,
-                        "beta": args.beta,
-                        "learning_rate_multiplier": args.lr,
+                        "hyperparameters": {
+                            "n_epochs": args.epochs,
+                            "beta": args.beta,
+                            "learning_rate_multiplier": args.lr,
+                        },
                     },
                 },
             )

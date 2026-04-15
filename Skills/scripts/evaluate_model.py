@@ -1,8 +1,13 @@
 """
-evaluate_model.py — Evaluate a deployed fine-tuned model using an LLM judge.
+evaluate_model.py — Custom 2-dimension LLM judge evaluator for fine-tuned models.
 
-Runs held-out prompts through the model, grades responses on two dimensions
-(correctness and conciseness), and produces aggregate scores.
+Uses the OpenAI API directly (not the Azure AI Evaluation SDK) to:
+1. Generate responses from a deployed fine-tuned model
+2. Grade each response on correctness and conciseness using an LLM judge
+3. Produce aggregate quality scores (weighted 70% correctness, 30% conciseness)
+
+By default, system prompts from each test example's messages array are used
+during generation. The --system-prompt flag overrides this for all examples.
 
 Usage:
   python evaluate_model.py \
@@ -12,9 +17,9 @@ Usage:
       --output results.json
 
   python evaluate_model.py \
+      --base-url "$BASE_URL" --api-key "$API_KEY" \
       --deployment-name my-ft-eval \
       --test-file test.jsonl \
-      --endpoint-type project \
       --concurrency 4
 """
 
@@ -72,7 +77,11 @@ def get_azure_client(endpoint, api_key, api_version="2025-04-01-preview"):
 
 
 def load_test_data(filepath):
-    """Load held-out test set. Expects JSONL with 'messages' array."""
+    """Load held-out test set. Expects JSONL with 'messages' array.
+
+    Extracts the system prompt (if present), user prompt, and assistant
+    reference from each example so per-example system prompts are preserved.
+    """
     data = []
     with open(filepath) as f:
         for line in f:
@@ -80,7 +89,9 @@ def load_test_data(filepath):
             msgs = ex["messages"]
             prompt = next(m["content"] for m in msgs if m["role"] == "user")
             reference = next(m["content"] for m in msgs if m["role"] == "assistant")
-            data.append({"prompt": prompt, "reference": reference})
+            system_msgs = [m["content"] for m in msgs if m["role"] == "system"]
+            system_prompt = system_msgs[0] if system_msgs else None
+            data.append({"prompt": prompt, "reference": reference, "system_prompt": system_prompt})
     return data
 
 
@@ -146,7 +157,8 @@ def main():
     parser.add_argument("--api-key", default=os.environ.get("AZURE_OPENAI_API_KEY"))
     parser.add_argument("--deployment-name", required=True, help="Deployed model name")
     parser.add_argument("--test-file", required=True, help="Held-out test set (JSONL)")
-    parser.add_argument("--system-prompt", default=None, help="System prompt for generation")
+    parser.add_argument("--system-prompt", default=None,
+                        help="Override system prompt for all examples (default: use per-example system prompt from test data)")
 
     # Judge config
     parser.add_argument("--judge-model", default="gpt-4o", help="Model for LLM judge")
@@ -189,8 +201,10 @@ def main():
     # Phase 1: Generate responses (sequential to avoid rate limits)
     print(f"\nGenerating responses from {args.deployment_name}...")
     for i, ex in enumerate(test_data):
+        # Use CLI override if provided, otherwise use per-example system prompt
+        effective_system_prompt = args.system_prompt if args.system_prompt is not None else ex.get("system_prompt")
         ex["output"] = generate_response(
-            model_client, args.deployment_name, ex["prompt"], args.system_prompt
+            model_client, args.deployment_name, ex["prompt"], effective_system_prompt
         )
         if (i + 1) % 10 == 0:
             print(f"  Generated {i+1}/{len(test_data)}")

@@ -220,8 +220,6 @@ evaluators = {
     "entity_accuracy": python_grader_entity_match, # entity overlap
 }
 ```
-}
-```
 
 ### Batch Evaluation with evaluate()
 
@@ -264,18 +262,14 @@ result = evaluate(
 
 ## Evaluation Pipeline for Fine-Tuning
 
-The `scripts/evaluate_model.py` script wraps the SDK for the fine-tuning workflow:
+The `scripts/evaluate_model.py` script is a standalone custom evaluator that uses the OpenAI API directly (it does **not** wrap the Azure AI Evaluation SDK). It implements a 2-dimension LLM judge that:
 
 ```
-1. Load held-out test set (JSONL with prompt + reference answer)
-2. For each model to evaluate:
-   a. Deploy model (see deployment-formats.md)
-   b. Generate responses for all prompts
-   c. Build eval JSONL (query, response, ground_truth)
-   d. Run evaluate() with appropriate evaluator set
-   e. Save results and compare to leaderboard
-   f. Delete deployment to free quota
-3. Compare all models on the leaderboard
+1. Load held-out test set (JSONL with messages array, including per-example system prompts)
+2. Generate responses from the deployed model for each prompt
+3. Grade each response on correctness and conciseness using an LLM judge
+4. Compute aggregate scores (weighted 70% correctness, 30% conciseness)
+5. Save per-example and summary results to JSON
 ```
 
 ## Test Set Design

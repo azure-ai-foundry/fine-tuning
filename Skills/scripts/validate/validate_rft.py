@@ -6,9 +6,11 @@ Adapted from foundry-ft agent with critical additions from our platform gotchas:
 - Content moderation risk detection ("chain of thought" triggers RAI filter)
 - Reference answer diversity check
 """
+import argparse
 import json
 import sys
 import re
+from collections import Counter
 
 
 RISKY_PHRASES = [
@@ -17,11 +19,13 @@ RISKY_PHRASES = [
 ]
 
 
-def validate_rft(filepath: str) -> None:
+def validate_rft(filepath: str, expected_field: str | None = None) -> None:
     errors = []
     warnings = []
     total = 0
-    ref_answers = []
+    extra_fields_per_line: list[set[str]] = []
+    all_extra_field_counts: Counter = Counter()
+    grader_values: list[str] = []
 
     with open(filepath, "r", encoding="utf-8") as f:
         for line_num, line in enumerate(f, 1):
@@ -46,21 +50,41 @@ def validate_rft(filepath: str) -> None:
                 elif not any(m.get("role") == "user" for m in msgs):
                     errors.append(f"Line {line_num}: 'messages' has no 'user' message")
 
-            if "reference_answer" not in record:
-                errors.append(f"Line {line_num}: Missing 'reference_answer' field")
-            else:
-                ref = str(record["reference_answer"]).strip()
-                if not ref:
-                    errors.append(f"Line {line_num}: 'reference_answer' is empty")
-                else:
-                    ref_answers.append(ref)
+            # Detect extra fields (grader fields) beyond 'messages'
+            extra_fields = set(record.keys()) - {"messages"}
+            extra_fields_per_line.append(extra_fields)
+            all_extra_field_counts.update(extra_fields)
 
-                # Check for grader escaping issues (CRITICAL platform gotcha)
-                if "\\n" in ref and "\\\\n" not in raw_line:
-                    warnings.append(
-                        f"Line {line_num}: reference_answer contains literal newlines — "
-                        "grader may fail. Use \\\\n in the JSON string."
+            if expected_field:
+                if expected_field not in record:
+                    errors.append(f"Line {line_num}: Missing expected field '{expected_field}'")
+                else:
+                    val = str(record[expected_field]).strip()
+                    if not val:
+                        errors.append(f"Line {line_num}: '{expected_field}' is empty")
+                    else:
+                        grader_values.append(val)
+            else:
+                if not extra_fields:
+                    errors.append(
+                        f"Line {line_num}: No grader fields found — RFT requires at least "
+                        "one field beyond 'messages' (e.g. 'answer', 'reference_code')"
                     )
+                else:
+                    # Collect values from extra fields for diversity check
+                    for field in sorted(extra_fields):
+                        val = str(record[field]).strip()
+                        if val:
+                            grader_values.append(val)
+
+                    # Check for grader escaping issues (CRITICAL platform gotcha)
+                    for field in extra_fields:
+                        val = str(record[field])
+                        if "\\n" in val and "\\\\n" not in raw_line:
+                            warnings.append(
+                                f"Line {line_num}: '{field}' contains literal newlines — "
+                                "grader may fail. Use \\\\n in the JSON string."
+                            )
 
             # Content moderation risk
             all_text = json.dumps(record).lower()
@@ -71,18 +95,34 @@ def validate_rft(filepath: str) -> None:
                     )
                     break
 
-    # Diversity check
-    if ref_answers:
-        unique_answers = set(ref_answers)
-        if len(unique_answers) == 1:
+    # Check for inconsistent extra-field schemas across examples
+    field_sets = [fs for fs in extra_fields_per_line if fs]
+    if len(field_sets) > 1:
+        first_schema = field_sets[0]
+        inconsistent_lines = [
+            i + 1 for i, fs in enumerate(extra_fields_per_line)
+            if fs and fs != first_schema
+        ]
+        if inconsistent_lines:
             warnings.append(
-                f"All reference_answers are identical ('{list(unique_answers)[0][:50]}...') — "
+                f"Inconsistent grader fields across examples — "
+                f"line 1 has {sorted(first_schema)}, but {len(inconsistent_lines)} "
+                f"line(s) differ (e.g. line {inconsistent_lines[0]}). "
+                "Ensure your grader handles all field variants."
+            )
+
+    # Diversity check
+    if grader_values:
+        unique_values = set(grader_values)
+        if len(unique_values) == 1:
+            warnings.append(
+                f"All grader field values are identical ('{list(unique_values)[0][:50]}...') — "
                 "grader may not learn effectively"
             )
-        avg_len = sum(len(a) for a in ref_answers) / len(ref_answers)
+        avg_len = sum(len(v) for v in grader_values) / len(grader_values)
         if avg_len > 500:
             warnings.append(
-                f"Average reference_answer length is {avg_len:.0f} chars — "
+                f"Average grader field value length is {avg_len:.0f} chars — "
                 "consider using a model_grader instead of string_check"
             )
 
@@ -93,9 +133,10 @@ def validate_rft(filepath: str) -> None:
     print(f"Errors: {len(errors)}")
     print(f"Warnings: {len(warnings)}")
 
-    if ref_answers:
-        unique_answers = set(ref_answers)
-        print(f"Unique reference answers: {len(unique_answers)}/{len(ref_answers)}")
+    if all_extra_field_counts:
+        print(f"\nGrader fields found:")
+        for field, count in all_extra_field_counts.most_common():
+            print(f"  • '{field}' — in {count}/{total} records")
 
     if errors:
         print(f"\n❌ ERRORS (must fix):")
@@ -116,7 +157,7 @@ def validate_rft(filepath: str) -> None:
         print(f"\n💡 RFT tips:")
         print(f"  • Ensure your training grader matches your eval grader (alignment gotcha)")
         print(f"  • Start with reasoning_effort='medium', pass_rate_threshold=0.5")
-        print(f"  • RFT only works with o3 and o4-mini — not GPT or OSS models")
+        print(f"  • RFT is primarily for o-series models (o3-mini, o4-mini). Check Azure docs for the latest supported model list.")
 
     if not errors:
         print(f"\n✅ Data is valid for RFT fine-tuning!")
@@ -126,7 +167,15 @@ def validate_rft(filepath: str) -> None:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python validate_rft.py <path-to-jsonl>")
-        sys.exit(1)
-    validate_rft(sys.argv[1])
+    parser = argparse.ArgumentParser(
+        description="Validate RFT (Reinforcement Fine-Tuning) JSONL files for Azure AI Foundry."
+    )
+    parser.add_argument("filepath", help="Path to the JSONL file to validate")
+    parser.add_argument(
+        "--expected-field",
+        default=None,
+        help="Specific grader field name to require (e.g. 'answer'). "
+             "If omitted, any extra field beyond 'messages' is accepted.",
+    )
+    args = parser.parse_args()
+    validate_rft(args.filepath, expected_field=args.expected_field)

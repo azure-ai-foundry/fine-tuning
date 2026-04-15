@@ -30,8 +30,11 @@ def extract_text(record: dict) -> str:
             for msg in record[field]:
                 if "content" in msg and msg["content"]:
                     texts.append(str(msg["content"]))
-    if "reference_answer" in record:
-        texts.append(str(record["reference_answer"]))
+    # Include any extra fields beyond messages/input/preferred_output/non_preferred_output
+    known_structural = {"messages", "input", "preferred_output", "non_preferred_output"}
+    for field in record:
+        if field not in known_structural and isinstance(record[field], (str, int, float)):
+            texts.append(str(record[field]))
     return " ".join(texts)
 
 
@@ -58,10 +61,14 @@ def data_stats(filepath: str) -> None:
     first = records[0]
     if "input" in first and "preferred_output" in first:
         format_type = "DPO"
-    elif "reference_answer" in first:
-        format_type = "RFT"
     elif "messages" in first:
-        format_type = "SFT"
+        msgs = first["messages"]
+        extra_fields = set(first.keys()) - {"messages"}
+        last_role = msgs[-1].get("role") if isinstance(msgs, list) and msgs else None
+        if extra_fields and last_role == "user":
+            format_type = "RFT"
+        else:
+            format_type = "SFT"
 
     # Compute stats
     token_counts = [estimate_tokens(extract_text(r)) for r in records]
@@ -107,11 +114,20 @@ def data_stats(filepath: str) -> None:
         print(f"Non-preferred output avg tokens: {sum(non_pref_lens)/len(non_pref_lens):,.0f}")
 
     elif format_type == "RFT":
-        ref_answers = [str(r.get("reference_answer", "")) for r in records]
-        unique = len(set(ref_answers))
-        avg_ref_len = sum(len(a) for a in ref_answers) / len(ref_answers)
-        print(f"\nUnique reference answers: {unique}/{len(records)}")
-        print(f"Avg reference answer length: {avg_ref_len:.0f} chars")
+        grader_field_counts = Counter()
+        grader_values = []
+        for r in records:
+            extra = set(r.keys()) - {"messages"}
+            grader_field_counts.update(extra)
+            for field in sorted(extra):
+                grader_values.append(str(r[field]))
+        unique = len(set(grader_values))
+        avg_val_len = sum(len(v) for v in grader_values) / len(grader_values) if grader_values else 0
+        print(f"\nGrader fields found:")
+        for field, count in grader_field_counts.most_common():
+            print(f"  • '{field}' — in {count}/{len(records)} records")
+        print(f"Unique grader values: {unique}/{len(grader_values)}")
+        print(f"Avg grader value length: {avg_val_len:.0f} chars")
 
     # Cost estimates per model family
     print(f"\n💰 Cost Estimates (1 epoch):")
