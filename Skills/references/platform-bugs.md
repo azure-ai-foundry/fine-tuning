@@ -34,7 +34,7 @@ Updated as we find new issues.
 - **Where**: Fine-tuning job validation / model deployment
 - **Expected**: Entity extraction data (names, dates, locations from business documents) should pass content safety
 - **Actual**: Model rejected for "Hate/Fairness" — triggered by PII-dense document types (medical records, legal contracts, resumes)
-- **Impact**: S9 training succeeded but model was blocked at deployment
+- **Impact**: Training succeeded but the model was blocked at deployment
 - **Workaround**: Remove medical, legal, and resume document types from training data. Resubmit.
 
 ## 5. FT deployments severely rate-limited (1K TPM / 1 RPM)
@@ -53,8 +53,13 @@ Updated as we find new issues.
 - **Impact**: Users who rely only on generic evaluators will conclude FT had no effect
 - **Workaround**: Always use custom graders (PythonGrader, ScoreModelGrader, StringCheckGrader) for task-specific evaluation
 
+---
+
+## Non-Bug Gotchas
+
+These aren't bugs — they're common stumbling blocks when using Azure AI Foundry tools.
+
 ## 7. `AZURE_FOUNDRY_API_KEY` env var lost between shell sessions
-- **Severity**: Low
 - **Where**: Data Designer CLI + any tool using env vars
 - **Expected**: Env var persists across terminal sessions (or is documented as session-scoped)
 - **Actual**: Must be re-set in every new PowerShell/terminal session
@@ -62,7 +67,6 @@ Updated as we find new issues.
 - **Workaround**: Set `$env:AZURE_FOUNDRY_API_KEY` at the start of every shell session
 
 ## 8. Data Designer CLI arg parsing
-- **Severity**: Low
 - **Where**: `data-designer create` CLI command
 - **Expected**: `--config <path>` flag (consistent with most CLIs)
 - **Actual**: Positional argument: `data-designer create <config.py>` — no `--config` flag
@@ -102,7 +106,7 @@ Updated as we find new issues.
 
 ---
 
-## 12. ~~Sustained transient HTTP 500~~ → Wrong resource endpoint (user error)
+## 12. Wrong resource endpoint (common user error)
 - **Severity**: N/A (not a platform bug)
 - **Root cause**: Jobs were submitted to a secondary resource endpoint instead of the Foundry-connected primary resource. The wrong resource had different compute/config and jobs failed mid-training.
 - **Lesson learned**: Always verify the OAI endpoint matches the resource connected to your Foundry project. Jobs submitted to the wrong resource will succeed via API but won't appear in the Foundry portal or telemetry. The two resources have completely separate job lists, file stores, and deployments.

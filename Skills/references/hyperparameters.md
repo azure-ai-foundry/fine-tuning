@@ -110,11 +110,11 @@ Then add batch size variation on the best-performing configuration.
 
 ## Model-Specific Notes
 
-**gpt-4.1-mini**: Responds well to low LR (0.5–1.0) with 2 epochs. Very capable base model — small nudges go a long way. Best text2py result: 9.2/10 at 2ep/lr=low (LD-LowLR).
+**gpt-4.1-mini**: Responds well to low LR (0.5–1.0) with 2 epochs. Very capable base model — small nudges go a long way. Responds well to conservative hyperparameters.
 
-**gpt-4.1-nano**: Needs slightly higher LR (1.0–1.5) and more epochs (2–3) due to smaller capacity. Excels at pattern tasks (PII redaction 94%, code gen 100% gap closure). FT nano can beat teacher mini on summarization and entity extraction.
+**gpt-4.1-nano**: Needs slightly higher LR (1.0–1.5) and more epochs (2–3) due to smaller capacity. Excels at pattern tasks (structured extraction, code generation). Fine-tuned nano can sometimes surpass the teacher model on specific tasks.
 
-**gpt-oss-20b-11**: Reaches lowest absolute eval loss with large datasets. Benefits from LR in the 0.2–0.5 range. Epoch 2 is universally the sweet spot. Best text2py result: 7.1/10 at 2ep/lr=0.3. Deployment can fail with InternalServerError — retry or use capacity=100.
+**gpt-oss-20b-11**: Benefits from lower LR (0.2–0.5) and 2 epochs as a starting point. Responds well to larger datasets. Deployment can fail with InternalServerError — retry or use capacity=100.
 
 **o4-mini (RFT)**: Hyperparameters are less tunable in RFT — the grader quality matters more than LR. Focus effort on the grader, not the HP sweep.
 
@@ -127,22 +127,20 @@ OSS models (Ministral-3B, gpt-oss-20b, Llama-3.3-70B, Qwen-32B) behave different
 3. **More prone to overfitting** — monitor validation loss carefully
 4. **Deployment may fail** with InternalServerError (platform bug, retry with capacity=100)
 
-### Starting points by model (from 50-model text2py experiments):
+### Starting points by model:
 
 | Model | Recommended Start | Best Found | Notes |
 |-------|------------------|------------|-------|
-| **Ministral-3B** | 5ep, lr=1.0 | 10ep, lr=0.5 (LD) | Needs many epochs; small model capacity means slower convergence. 50ep massively overfits. |
+| **Ministral-3B** | 5ep, lr=1.0 | 10ep, lr=0.5 | Needs many epochs; small model capacity means slower convergence. 50ep massively overfits. |
 | **gpt-oss-20b** | 2ep, lr=0.3 | 2ep, lr=0.3 | Lower LR is critical — lr=1.0 overfits quickly. Responds well to larger datasets. |
-| **Llama-3.3-70B** | 3ep, lr=0.3 | 5ep, lr=0.5 (LD) | Large model, baseline was weak on code tasks (13%). FT improved it significantly (+11.8%). lr=2.0 caused catastrophic degradation. |
-| **Qwen-32B** | 3ep, lr=0.3 | 3ep, lr=0.3 (LD) | Most fragile — more data hurt performance. 50ep caused collapse. Conservative HP only. |
+| **Llama-3.3-70B** | 3ep, lr=0.3 | 5ep, lr=0.5 | Large model, baseline was weak on code tasks (13%). FT improved it significantly (+11.8%). lr=2.0 caused catastrophic degradation. |
+| **Qwen-32B** | 3ep, lr=0.3 | 3ep, lr=0.3 | Most fragile — more data hurt performance. 50ep caused collapse. Conservative HP only. |
 
-### Cross-task HP experiments (in progress):
-Testing whether text2py HP patterns transfer to PII redaction, summarization, and NL→SQL.
-Results will be added here when available.
+> **Note:** These starting points were derived from code generation tasks. They transfer reasonably well to other task types, but task-specific tuning may still improve results.
 
-### Key lessons from OSS HP tuning:
+### Key patterns for OSS models:
 - **OSS models need 2-5× more epochs than nano** for the same task
 - **Lower LR is safer** (0.3-0.5) — lr=1.0 works for Ministral but overfits gpt-oss-20b
-- **More data doesn't always help** — 4710 examples made Qwen and Llama worse than 1576
+- **More data doesn't always help** — large datasets (4K+) can sometimes degrade OSS model quality
 - **Batch size rarely matters** — defaults are fine for OSS models
 - **Always check for deployment bugs** before blaming HPs — OSS models have known deployment issues

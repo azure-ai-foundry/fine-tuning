@@ -97,7 +97,7 @@ azd ai finetuning jobs deploy \
 | Base model | `-m` value | `-s` value |
 |-----------|-----------|-----------|
 | gpt-4.1-mini / nano | `"OpenAI"` | `"Standard"` |
-| gpt-oss-20b-11 | `"oss-20b"` | `"GlobalStandard"` |
+| gpt-oss-20b-11 | `"Microsoft"` | `"GlobalStandard"` |
 | Ministral-3B | `"Mistral AI"` | `"GlobalStandard"` |
 | Llama-3.3-70B | `"Meta"` | `"GlobalStandard"` |
 | Qwen-3-32B | `"Alibaba"` | `"GlobalStandard"` |

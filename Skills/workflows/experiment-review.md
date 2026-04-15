@@ -151,8 +151,8 @@ When: Quality is good but need lower cost/latency.
 Maintain an experiment log. Each entry should record:
 
 ```
-Experiment: S1-v2
-  Parent: S1-v1 (ftjob-xxx)
+Experiment: experiment-2
+  Parent: experiment-1 (ftjob-xxx)
   Change: Deploy epoch-1 checkpoint instead of final model
   Hypothesis: Epoch 1 has better val_loss, may score higher
   Base model: gpt-4.1-nano
@@ -170,50 +170,52 @@ Stop iterating when:
 - Cost of further experiments exceeds value of improvement
 - Base model is already near-ceiling for the task (DPO peacemaker case)
 
-## Lessons from 6 Production Scenarios
+## Lessons Learned from Production Fine-Tuning
 
-These patterns emerged from testing the full pipeline end-to-end across SFT, DPO, and RFT:
+These patterns emerged from extensive testing across SFT, DPO, and RFT on Azure AI Foundry:
 
-1. **SFT distillation is the most reliable pattern.** mini→nano distillation achieved 58–100% teacher gap closure across 3 different tasks (NL→Python, Text→C#, PII redaction) with just 200–300 examples and 2 epochs.
+### SFT & Distillation Patterns
 
-2. **Val loss overfitting doesn't always hurt.** An S1 model 84% above its best val_loss still outperformed its epoch-1 checkpoint on downstream eval (8.90 vs 8.77). Always evaluate, don't just trust curves.
+1. **SFT distillation is the most reliable pattern.** Teacher→student distillation (e.g., mini→nano) routinely achieves high gap closure across tasks like code generation, summarization, and structured extraction with just 200–300 examples and 2 epochs.
 
-3. **DPO can make things worse.** When the base model already scores >9/10 on a task, DPO actively degraded quality (9.71→7.29) with degenerate output on sensitive topics. This happened at epoch 1 too — not just overtraining.
+2. **Val loss overfitting doesn't always hurt.** A model well above its best val_loss can still outperform its epoch-1 checkpoint on downstream eval. Always evaluate on held-out data — don't just trust curves.
 
-4. **Small datasets (<100 examples) teach format only.** 73 tool-calling examples taught nano to always produce tool calls (100% vs 80%) with valid JSON, but correct tool selection stayed at 40%.
+3. **Fine-tuned small models can beat the teacher.** On tasks with clear input→output patterns (summarization, entity extraction, code generation), fine-tuned nano models frequently surpass the teacher. The model learns a specific output style from training data that the larger teacher doesn't naturally produce.
 
-5. **Well-defined pattern tasks distill best.** PII redaction (94% gap closure) and code generation (100% gap closure) — tasks with clear input→output patterns — are ideal for distillation. Open-ended alignment tasks are not.
+4. **Small datasets (<100 examples) teach format only.** With very few examples, a fine-tuned model learns mechanical patterns (e.g., always produce tool calls, valid JSON) but does NOT improve task-specific accuracy. Need 200+ examples for domain knowledge.
 
-6. **Generate 15–20% more data than needed.** Content filters reject ~14% of synthetic PII/security data. Also account for deduplication and quality filtering.
+5. **Well-defined pattern tasks distill best.** Structured extraction and code generation — tasks with clear input→output patterns — are ideal for distillation. Open-ended alignment tasks are not.
 
-## Lessons from Expanded Experiments (S6v2–S12)
+6. **Generate 15–20% more data than needed.** Content filters reject a portion of synthetic PII/security data. Also account for deduplication and quality filtering.
 
-7. **Always baseline before fine-tuning.** S6v2 tool calling showed base nano already scored 100% correct tool / 80% correct args — identical to teacher mini. FT added no value. Run evals on the base model first.
+7. **Always baseline before fine-tuning.** Sometimes the base model already handles the task perfectly. Run evals on the base model first to confirm there's room for improvement.
 
-8. **Content safety can reject the FT model even with innocuous data.** S9 entity extraction training succeeded but the model was rejected at deployment for "Hate/Fairness" — triggered by PII-heavy documents (medical records, legal contracts, resumes). Workaround: remove sensitive document types and resubmit.
+### DPO Patterns
 
-9. **FT nano can surpass teacher mini.** S7 CNN DailyMail summarization: FT nano (ROUGE-1 0.363, judge relevance 4.4/5) beat both base nano (0.320, 4.0/5) and teacher mini (0.303, 4.2/5). This happens when the training data teaches a specific output style the teacher doesn't naturally produce.
+8. **DPO can make things worse.** When the base model already scores well (>4.5/5) on a task, DPO actively degrades quality with degenerate output. This can happen even at epoch 1 — it's not just overtraining.
 
-10. **Generic SDK evaluators cannot measure FT improvement.** Built-in Coherence/Fluency/TaskAdherence showed zero difference between base and FT on peacemaker task. Use custom graders (PythonGrader, ScoreModelGrader, StringCheckGrader) for task-specific evaluation. Generic evals are only useful as degradation guardrails.
+9. **DPO consistently fails when the base is already strong.** If the base model scores >4.5/5, DPO will likely degrade rather than improve. DPO only helps when there's a clear gap between chosen and rejected that the base model doesn't already exploit.
 
-11. **Data Designer config uses `DataDesignerConfigBuilder` with `load_config_builder()`.** The DD package (`data_designer.config`) uses a builder pattern, not a declarative config class. Templates use `{{ variable }}` (Jinja2 syntax). The CLI takes a positional config arg, not `--config`.
+### RFT Patterns
 
-12. **FT deployment "DeploymentNotReady" can persist after ARM shows Succeeded.** Delete and recreate the deployment if it stays stuck. There is no other workaround — the data plane lags behind the control plane.
+10. **The grader matters more than hyperparameters.** For RFT, focus effort on grader quality and alignment rather than HP sweeps.
 
-13. **Entity extraction FT: quality beats format.** S9v2 FT nano achieved 0.781 entity F1 vs 0.698 base and 0.700 teacher — a second case of FT beating the teacher. However, JSON validity dropped to 90% (from 100% base). The model learned better entity recognition but slightly worse output formatting. Consider adding format-only examples to training data.
+### Evaluation Patterns
 
-14. **DPO consistently fails when base is already strong.** S8 DPO Orca (mini) degraded from 4.96→3.33/5. This is the third DPO failure (S2, S2v2, S8). Pattern: if base model scores >4.5/5, DPO will make it worse. DPO only helps when there's a clear gap between chosen and rejected that the base model doesn't already exploit.
+11. **Generic SDK evaluators cannot measure FT improvement.** Built-in Coherence/Fluency/TaskAdherence evaluators often show zero difference between base and FT. Use custom graders (PythonGrader, ScoreModelGrader, StringCheckGrader) for task-specific evaluation. Generic evals are only useful as degradation guardrails.
 
-15. **PubMed summarization: third case of FT beating teacher.** S11 FT nano (ROUGE-1 0.460) surpassed both base nano (0.392) and teacher mini (0.421). With S7 CNN and S9v2 Entity, this makes 3/4 SFT distillation tasks where nano FT beat the mini teacher. The pattern: FT learns a specific output style from training data that the larger teacher doesn't naturally produce.
+12. **Content safety can reject the FT model even with innocuous data.** Training may succeed but the model can be rejected at deployment for content safety violations triggered by PII-heavy documents. Workaround: remove sensitive document types and resubmit.
 
-16. **NL→SQL needs more/better data for FT gains.** S12 FT nano showed flat keyword F1 (0.750 vs 0.743 base) and slightly worse judge scores (3.1 vs 3.6). Only 231 training examples from DD. SQL tasks may need 500+ examples with diverse schema complexity to show meaningful improvement.
+### OSS Model Patterns
 
-## Lessons from OSS Cross-Task Experiments (S13)
+13. **OSS FT deployment format must match the base model family.** Using the wrong format causes an unhelpful HTTP 500. See `references/deployment-formats.md` for the mapping.
 
-17. **OSS FT deployment format must match the base model family.** Using `format: "OpenAI"` for OSS FT models causes an unhelpful HTTP 500. Correct formats: Ministral-3B → `"Mistral AI"`, gpt-oss-20b → `"Microsoft"`, Llama → `"Meta"`, Qwen → `"Alibaba"`. Always use `version: "1"` and `sku: "GlobalStandard"`.
+14. **OSS FT models suffer intermittent LoRA weight loading failures.** Deploy with capacity ≥ 100 and use aggressive retries. This is a platform bug, not a model quality issue.
 
-18. **OSS FT models suffer intermittent LoRA weight loading failures.** After successful deployment, ~70-90% of requests may return HTTP 500 "Failed to get finetune weights path: TooManyRequests". Deploy with capacity ≥ 100 and use aggressive retries. This is a platform bug, not a model quality issue.
+15. **Small OSS models can't memorize large label sets.** Models with ~3B parameters fail at classification with 50+ classes — they invent synonym labels. Increasing data doesn't help (model capacity limit). Use ≥20B models for many-class tasks.
 
-19. **Ministral-3B FT shows strong cross-task transfer.** S5 PII: FT 3.40 vs base 2.80 (+21%); S7 Summarization: FT ROUGE-1 0.390 vs base 0.297 (+31%), beating teacher mini (0.265). With just 5 epochs and lr=1.0, Ministral-3B learned summarization style better than even GPT-4.1-mini teacher. This is the 4th case of FT beating the teacher and the 1st with an OSS model.
+### Data & Format Patterns
 
-20. **OSS HP patterns from text2py partially transfer to other tasks.** Ministral-3B with 5ep/lr1.0 (text2py best range) worked well for summarization. The conservative HP starting points identified from the 50-model text2py leaderboard are a reasonable starting point for other tasks, though task-specific tuning may still improve results.
+16. **Data Designer tips**: `CategorySamplerParams` uses `values=` (not `categories=`); use `LLMTextColumnConfig` (not `LLMColumnConfig`); set `AZURE_FOUNDRY_API_KEY` each new shell session.
+
+17. **Classification eval MUST include the system prompt.** If your training data has a system prompt, replay it at eval time — otherwise the model reverts to generic assistant behavior.

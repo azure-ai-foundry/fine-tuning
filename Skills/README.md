@@ -25,7 +25,7 @@ A **skill** is a structured set of instructions, reference documentation, and re
 ### 1. Install the skill
 
 **GitHub Copilot (VS Code / CLI):**
-Copy the `Skills/` directory into your project and reference `SKILL.md` in your Copilot instructions, or use it as a [custom skill](https://docs.github.com/en/copilot/customizing-copilot/copilot-extensions/building-copilot-skills).
+Copy the `Skills/` directory into your project and reference `SKILL.md` in your Copilot instructions, or use it as a [Copilot custom instructions](https://docs.github.com/en/copilot/customizing-copilot/adding-repository-custom-instructions).
 
 **Claude Code:**
 Add the skill directory to your project and reference `SKILL.md` in your `CLAUDE.md` or system prompt.
@@ -42,7 +42,7 @@ cp Skills/.env.template Skills/.env
 
 Required Python packages:
 ```bash
-pip install openai azure-identity tiktoken
+pip install openai azure-identity tiktoken requests
 ```
 
 ### 3. Start fine-tuning
@@ -114,24 +114,26 @@ Skills/
 
 | Model | SFT | DPO | RFT | Vision | Notes |
 |-------|-----|-----|-----|--------|-------|
-| gpt-4.1-mini | ✅ | ✅ | ✅ | ❌ | Best general-purpose FT model |
-| gpt-4.1-nano | ✅ | ✅ | ✅ | ❌ | Best for distillation targets |
-| gpt-4o | ✅ | ✅ | ✅ | ✅ | Vision fine-tuning supported |
-| gpt-4.1 | ✅ | ✅ | ✅ | ✅ | Vision fine-tuning supported |
+| gpt-4.1-mini | ✅ | ✅ | ❌ | ❌ | Best general-purpose FT model |
+| gpt-4.1-nano | ✅ | ✅ | ❌ | ❌ | Best for distillation targets |
+| gpt-4o | ✅ | ✅ | ❌ | ✅ | Vision fine-tuning supported |
+| gpt-4.1 | ✅ | ✅ | ❌ | ✅ | Vision fine-tuning supported |
+| o4-mini | ❌ | ❌ | ✅ | ❌ | RFT with graders |
+| o3-mini | ❌ | ❌ | ✅ | ❌ | RFT with graders |
 | Ministral-3B | ✅ | ❌ | ❌ | ❌ | OSS; requires `globalStandard` training type |
 | gpt-oss-20b | ✅ | ❌ | ❌ | ❌ | OSS; requires `globalStandard` training type |
 | Llama-3.3-70B | ✅ | ❌ | ❌ | ❌ | OSS; requires `globalStandard` training type |
 | Qwen-3-32B | ✅ | ❌ | ❌ | ❌ | OSS; requires `globalStandard` training type |
 
-## Validated Patterns
+## Guidance Highlights
 
-This skill encodes lessons from 20+ end-to-end fine-tuning experiments across SFT, DPO, and RFT. Key findings:
+Key patterns encoded in this skill:
 
-- **SFT distillation is the most reliable pattern** — mini→nano achieves 58–100% teacher gap closure with 200–300 examples
-- **Fine-tuned nano can beat the teacher** — observed in 4 out of 6 SFT distillation tasks
-- **DPO fails when the base model is already strong** — if base scores >4.5/5, DPO actively degrades quality
-- **RFT works for verifiable-answer tasks** — math, code, structured output with graders
-- **200–500 examples is the sweet spot** to get started; quality matters more than quantity
+- **Start with SFT distillation** — the most reliable fine-tuning pattern, achieving high teacher gap closure with 200–500 examples
+- **Always baseline first** — evaluate the base model before fine-tuning to confirm there's room for improvement
+- **DPO is risky when the base is already strong** — it can degrade quality if the model already handles the task well
+- **RFT is for verifiable tasks** — math, code with test suites, structured output with exact-match graders
+- **Quality over quantity** — 200–500 high-quality examples is a good starting point
 
 ## Contributing
 

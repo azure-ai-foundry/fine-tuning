@@ -1,5 +1,11 @@
 # Dataset Creation Workflow
 
+> **Two paths to training data:**
+> 1. **Manual** — Prepare your own JSONL file following the formats in `references/dataset-formats.md`
+> 2. **Synthetic generation** — Use NVIDIA Data Designer (below) to generate training data from an LLM
+>
+> If you already have data, skip to validation: `python scripts/validate/validate_sft.py your_data.jsonl`
+
 Two approaches for generating synthetic training data. Choose based on your needs.
 
 ## Approach 1: NVIDIA Data Designer (Recommended for Production)

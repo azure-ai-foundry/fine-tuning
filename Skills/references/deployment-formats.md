@@ -32,7 +32,7 @@ Azure AI Foundry has two endpoint types, and each fine-tuned model must be calle
 
 ## Deployment via ARM REST API
 
-The most reliable deployment method — works for all model types.
+The most reliable deployment method — works for all model types. Uses the provider-specific `model.format` values from the table above.
 
 ### Create Deployment
 
@@ -58,6 +58,32 @@ Body:
   }
 }
 ```
+
+## Deployment via `az cognitiveservices` CLI
+
+The `az cognitiveservices account deployment create` command uses a **different** format string than the ARM REST API. For all OSS models, use `"OpenAI-OSS"` as the `--model-format`:
+
+```bash
+az cognitiveservices account deployment create \
+  --name <resource> \
+  --resource-group <rg> \
+  --deployment-name <name> \
+  --model-name <model> \
+  --model-version "1" \
+  --model-format "OpenAI-OSS" \
+  --sku-capacity 100 \
+  --sku-name "GlobalStandard"
+```
+
+| Base model family | ARM REST `model.format` | `az cognitiveservices` `--model-format` |
+|-------------------|------------------------|-----------------------------------------|
+| gpt-4.1-mini / nano | `"OpenAI"` | `"OpenAI"` |
+| gpt-oss-20b | `"Microsoft"` | `"OpenAI-OSS"` |
+| Ministral-3B | `"Mistral AI"` | `"OpenAI-OSS"` |
+| Llama-3.3-70B | `"Meta"` | `"OpenAI-OSS"` |
+| Qwen-3-32B | `"Alibaba"` | `"OpenAI-OSS"` |
+
+> **Warning**: These two APIs use different format strings for OSS models. Using `"OpenAI-OSS"` in an ARM REST call (or `"Microsoft"` in `az cognitiveservices`) will fail with HTTP 500.
 
 ### Check Deployment Status
 

@@ -352,7 +352,7 @@ Track all experiments in a single JSON leaderboard:
 
 ```json
 {
-  "S1-SFT-NL2Py": {
+  "experiment-1-sft-code-gen": {
     "base_model": "gpt-4.1-nano",
     "training_type": "SFT",
     "dataset": "train.jsonl",

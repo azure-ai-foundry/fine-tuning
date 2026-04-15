@@ -70,7 +70,17 @@ Most projects start with SFT. Only move to RFT/DPO if SFT isn't sufficient.
 
 ## Phase 5: Upload Data and Submit Training
 
-1. Upload training and validation files:
+1. Set up your client:
+   ```python
+   # See scripts/common.py for full auth helper
+   import openai
+   client = openai.OpenAI(
+       base_url="https://<resource>.services.ai.azure.com/api/projects/<project>/openai/v1/",
+       api_key="<your-api-key>"  # or use AZURE_OPENAI_API_KEY env var
+   )
+   ```
+
+2. Upload training and validation files:
    ```python
    train_file = client.files.create(purpose="fine-tune", file=open("training.jsonl", "rb"))
    val_file = client.files.create(purpose="fine-tune", file=open("validation.jsonl", "rb"))
@@ -78,7 +88,7 @@ Most projects start with SFT. Only move to RFT/DPO if SFT isn't sufficient.
    client.files.wait_for_processing(val_file.id)
    ```
 
-2. Submit first training job with default hyperparameters:
+3. Submit first training job with default hyperparameters:
    ```python
    job = client.fine_tuning.jobs.create(
        model="gpt-4.1-mini",

@@ -141,11 +141,11 @@ Reusable Python scripts in `scripts/`. Each is self-contained with inline docume
 - **DPO default epochs**: Azure Foundry defaults DPO to **3 epochs**, not 2. For small datasets (<500 pairs), explicitly set `n_epochs=1` or `n_epochs=2` to avoid overtraining. The `hyperparameters` field on the job object may show `None` even when defaults are applied.
 - **File upload quota**: Max 100 files per resource. Delete old uploads when approaching the limit.
 - **Token refresh**: ARM tokens expire. Always call `az account get-access-token` immediately before each request.
-- **Val loss overfitting ≠ worse quality**: A model with 84% above best val_loss can still outperform an earlier checkpoint on downstream evals. Don't blindly deploy epoch-1 checkpoints — always evaluate with a held-out test set before deciding.
+- **Val loss overfitting ≠ worse quality**: A model significantly above its best val_loss can still outperform an earlier checkpoint on downstream evals. Don't blindly deploy epoch-1 checkpoints — always evaluate with a held-out test set before deciding.
 - **Small datasets teach format, not domain**: With <100 examples (e.g., 73 tool-calling samples), a fine-tuned model learns mechanical patterns (always call a tool, produce valid JSON args) but does NOT improve task-specific accuracy (correct tool selection). Need 200+ examples for domain knowledge.
 - **Dataset size sweet spot**: 200–500 examples is the sweet spot to get started. Evaluate results, then decide if you need more data — quality matters more than quantity. Larger datasets (4K+) can actually hurt OSS models. For distillation tasks, 200–300 high-quality examples is often sufficient.
-- **Distillation sweet spot**: SFT distillation from mini→nano achieves 94–100% teacher gap closure on well-defined tasks (code generation, PII redaction) with just 200–300 examples and 2 epochs. This is the most reliable fine-tuning pattern. For classification tasks, direct SFT on gold labels works better than distillation when ground truth is clean.
-- **Latency benchmarking**: Always measure p50/p90/p95/p99 latency for base vs fine-tuned models, not just accuracy. Fine-tuned models often have lower latency + tighter variance (e.g., Image_Breed_Classification demo showed -9.6% mean, -15.9% p99). See [microsoft-foundry/fine-tuning Image_Breed demo](https://github.com/microsoft-foundry/fine-tuning/tree/main/Demos/Image_Breed_Classification_FT).
+- **Distillation sweet spot**: SFT distillation (e.g., mini→nano) routinely achieves high teacher gap closure on well-defined tasks (code generation, structured extraction) with just 200–300 examples and 2 epochs. This is the most reliable fine-tuning pattern. For classification tasks, direct SFT on gold labels works better than distillation when ground truth is clean.
+- **Latency benchmarking**: Always measure p50/p90/p95/p99 latency for base vs fine-tuned models, not just accuracy. Fine-tuned models often have lower latency + tighter variance — see the [Image Breed Classification demo](../Demos/Image_Breed_Classification_FT/) for an example showing mean and p99 latency improvements.
 - **Content filters on PII/security data**: Generating synthetic data containing SSNs, credit cards, or security-sensitive content can trigger Azure's jailbreak filter. Expect ~14% rejection rate. Generate extra examples to compensate.
 - **Data Designer `categories` vs `values`**: `CategorySamplerParams` uses `values=`, NOT `categories=`. Using the wrong field name causes a cryptic `Field required` pydantic error.
 - **Data Designer `LLMColumnConfig` doesn't exist**: Use `LLMTextColumnConfig` for text generation and `LLMStructuredColumnConfig` for structured output. The DD SKILL.md and `data-designer agent context` command have the correct types.
@@ -166,31 +166,42 @@ Reusable Python scripts in `scripts/`. Each is self-contained with inline docume
 - **Vision FT training data is large**: Base64-encoded JPEG images produce ~80KB per training example. A 2,000-example vision dataset is ~165MB. File upload may timeout — consider splitting into chunks or using the REST API with longer timeouts.
 - **Vision FT requires image-capable models**: Only gpt-4o and gpt-4.1 support vision fine-tuning. gpt-4.1-mini and gpt-4.1-nano do NOT support image inputs for fine-tuning.
 - **ChartQA dataset filtering**: HuggingFaceM4/ChartQA contains both human-labeled and machine-labeled examples. Filter to `human_or_machine == 0` (human) for higher quality. The `label` column may be a list — extract the first element.
-- **Classification FT: 3B OSS models can't memorize large label sets (confirmed)**: Ministral-3B failed at 77-class classification with both 500 and 2000 training examples — it consistently invents synonym labels ("RevertTransaction" instead of "cancel_transfer"). 4x more data did not help (0%→1%). This is a model capacity limit, not a data issue. gpt-oss-20b (20B params) achieved 34%. For classification with many classes, use ≥20B models or reduce label count.
+- **Classification FT: Small OSS models can't memorize large label sets**: Small models (3B parameters) fail at many-class classification (50+ classes) — they invent synonym labels instead of learning the exact vocabulary. Increasing training data does not help; this is a model capacity limit. Larger models (20B+) perform significantly better. For classification with many classes, use ≥20B models or reduce label count.
 - **Classification eval MUST include the system prompt**: Training data with a system prompt ("You are a classifier...") teaches the model to output labels. Without the same system prompt at eval time, the FT model reverts to generic helpful assistant behavior (0% accuracy). Always replay the exact system prompt from training data.
 
 
-# Validated Scenarios (tested end-to-end)
+# What to Expect by Training Type
 
-| Scenario | Type | Base→FT | Teacher | Gap Closure | Key Takeaway |
-|----------|------|---------|---------|-------------|--------------|
-| NL→Python distillation | SFT | 8.62→8.90 | 9.10 | 58% | Reliable pattern, works well |
-| Peacemaker alignment | DPO | 9.71→7.29 | — | ❌ Worse | Don't DPO when base is already good |
-| Peacemaker SFT (DD) | SFT | — | — | No diff | SDK generic evals can't measure style tasks |
-| Math reasoning | RFT | 55%→65% | — | +10pp | Works for verifiable-answer tasks |
-| Text→C# distillation | SFT | 8.53→9.00 | 9.00 | 100% | Perfect teacher match on nano |
-| PII redaction | SFT | 8.40→9.27 | 9.33 | 94% | Pattern tasks distill best |
-| Tool calling format | SFT | 80%→100% | — | Format only | Need more data for accuracy |
-| Tool calling DD | SFT | 100%→100% | 100% | N/A | Base already perfect — always baseline first |
-| CNN DailyMail summarization | SFT | R1 .320→.363 | R1 .303 | **Beats teacher** | FT nano surpassed mini on ROUGE+judge |
-| Entity extraction DD (v2) | SFT | F1 .698→.781 | F1 .700 | **Beats teacher** | FT nano +12% F1 over both base and teacher; minor JSON format regression (90% vs 100%) |
-| DPO Orca reasoning | DPO | 4.96→3.33 | — | ❌ Worse | 3rd DPO failure — base mini already near-perfect, DPO degraded coherence |
-| PubMed summarization | SFT | R1 .392→.460 | R1 .421 | **Beats teacher** | 3rd case of FT nano surpassing teacher mini |
-| NL→SQL (DD) | SFT | KW .743→.750 | KW .833 | Marginal | Keyword F1 flat; judge correctness slightly worse; teacher still best |
-| OSS Ministral-3B S5 PII | SFT | 2.80→3.40 | 4.67 (mini) | 32% | OSS FT works; +21% over Ministral base but still below Nano/Mini |
-| OSS Ministral-3B S7 Summ | SFT | R1 .297→.390 | R1 .265 (mini) | **Beats teacher** | 4th FT-beats-teacher; 1st with OSS model; +31% over base |
-| S13 OSS gpt-oss-20b BANKING77 | SFT | 4%→34% (exact) | — | +30pp | 77-class classification; learned exact label format; close misses use synonyms |
-| S13 Ministral-3B BANKING77 | SFT | 0%→0% (exact) | — | 0pp | **FT failed**: 3B too small for 77-class vocab; invents synonym labels |
-| S13 Ministral-3B BANKING77 2k | SFT | 0%→1% (exact) | — | ~0pp | **More data didn't help**: confirms 3B model capacity limit, not data issue |
+These patterns are based on extensive end-to-end testing across SFT, DPO, and RFT.
+
+## SFT Distillation (Most Reliable)
+
+- **Teacher→student distillation** (e.g., mini→nano) typically achieves 58–100% teacher gap closure with 200–300 examples and 2 epochs
+- Fine-tuned small models can sometimes **surpass the teacher** on tasks with clear input→output patterns (summarization, entity extraction, code generation)
+- **Pattern tasks distill best**: Code generation, PII redaction, and structured extraction show the highest gap closure
+- Tasks requiring open-ended reasoning or alignment show weaker distillation results
+
+## DPO (Use With Caution)
+
+- **DPO fails when the base model is already strong.** If the base model scores >4.5/5 on your task, DPO will likely degrade quality rather than improve it
+- DPO is prone to **degeneration** (repetitive/garbage output), especially on sensitive topics — even at epoch 1
+- **When DPO helps**: The base model has a clear quality gap on your task, and you have well-differentiated preference pairs
+
+## RFT (For Verifiable Tasks)
+
+- RFT works best for tasks with **verifiable answers**: math, code with test suites, structured output with exact-match grading
+- Typical improvement: +10 percentage points on exact-match accuracy for math/reasoning tasks
+- **The grader matters more than hyperparameters** — invest in grader quality before tuning LR/epochs
+- See `references/reward-hacking-prevention.md` for the #1 RFT failure mode
+
+## Common Pitfalls
+
+| Pitfall | What happens | Fix |
+|---------|-------------|-----|
+| Skipping baseline evaluation | You can't measure improvement | Always evaluate the base model first |
+| Too few examples (<100) | Model learns format but not domain knowledge | Use 200–500 examples minimum |
+| DPO on strong base model | Quality degrades | Use SFT instead, or skip fine-tuning |
+| Misaligned RFT grader | Reward hacking — model games the grader | Use same grading logic for training and eval |
+| Small OSS models on large label sets | Model invents synonym labels (capacity limit) | Use ≥20B parameter models for 50+ classes |
 
 

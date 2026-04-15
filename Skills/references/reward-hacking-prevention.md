@@ -1,6 +1,6 @@
 # Reward Hacking Prevention in RFT Fine-Tuning
 
-> **Source**: 8 rounds of RFT experiments on Azure AI Foundry (57 models total), conducted on text-to-Python code generation with o4-mini.
+> Practical guidance based on extensive RFT experimentation on Azure AI Foundry.
 
 ---
 
@@ -8,7 +8,7 @@
 
 Reward hacking occurs when a model optimizes for the grader's scoring function rather than the actual task objective. The training grader becomes a **proxy reward** that diverges from true quality—the model learns to game the proxy instead of improving at the task.
 
-**Our experience**: In RFT rounds R2–R6, the model learned to produce code that structurally mimicked reference solutions (high AST grader scores) without actually solving problems (low LLM judge scores). Train-val gaps of **0.24–0.27** confirmed classic reward hacking.
+**Example**: During RFT for code generation, a model learned to produce code that structurally mimicked reference solutions (high AST grader scores) without actually solving problems (low LLM judge scores). Train-val gaps of **0.24–0.27** confirmed classic reward hacking.
 
 ---
 
@@ -22,12 +22,12 @@ Reward hacking occurs when a model optimizes for the grader's scoring function r
 | Exact match | Exact match | Fuzzy or partial matching |
 | Unit tests | Unit tests | Static analysis alone |
 
-**Misaligned graders are the #1 cause of reward hacking.** In our experiments:
+**Misaligned graders are the #1 cause of reward hacking.**
 
-- **R2–R6** (misaligned): AST grader for training, GPT-5.4 judge for eval → train-val gap of 0.24–0.27
-- **R7–R8** (aligned): gpt-4o judge for training, GPT-5.4 judge for eval → train-val gap collapsed to **0.01–0.05** ✅
+- **Misaligned example**: AST grader for training + LLM judge for eval → train-val gap of 0.24–0.27
+- **Aligned example**: LLM judge for both training and eval → train-val gap collapsed to **0.01–0.05** ✅
 
-However, alignment alone isn't sufficient—see the grader design section for the conciseness trap we hit.
+However, alignment alone isn't sufficient—see the grader design section for the conciseness trap.
 
 ---
 
@@ -104,7 +104,7 @@ When reward hacking is detected:
 6. RESTART training with the improved grader
 ```
 
-**Our example**: R2–R6 models exploited the AST grader by producing structurally correct code that was semantically wrong. The fix was switching to an LLM judge (gpt-4o) for training, which eliminated the structural mimicry exploit.
+**Example**: Models exploited an AST grader by producing structurally correct code that was semantically wrong. The fix was switching to an LLM judge for training, which eliminated the structural mimicry exploit.
 
 ---
 
@@ -119,11 +119,7 @@ Example for code generation:
 - **Style** (0–10): Does the code follow best practices?
 
 ### Use the same model family for training and eval graders
-Different model families have different preferences:
-- **gpt-4o** favors verbose, explanatory code
-- **GPT-5.4** favors concise, clean code
-
-In our R7/R8 experiments, aligning graders (gpt-4o for training) eliminated reward hacking but **conciseness cratered** (4.6–5.4 vs 8.7 base) because gpt-4o rewarded verbose explanatory code that GPT-5.4 penalized.
+Different model families have different preferences. For example, one model may favor verbose explanatory code while another favors concise clean code. If your training grader and eval judge use different models, the fine-tuned model may optimize for one style while being penalized by the other — even though reward hacking was technically eliminated.
 
 ### Temperature = 0 for graders
 Always use temperature=0 for reproducible, deterministic scores. Non-deterministic graders add noise that makes reward hacking harder to detect.
@@ -135,39 +131,31 @@ Always use temperature=0 for reproducible, deterministic scores. Non-determinist
 Vague prompts let the model find soft dimensions to exploit.
 
 ### Available grader models on Azure RFT
-As of April 2026, Azure AI Foundry RFT supports only:
-- **gpt-4o**
-- **o3-mini**
-
-This is a significant constraint. Plan your grader strategy around these two options.
+Azure AI Foundry RFT currently supports a limited set of models for grading (check the [official docs](https://learn.microsoft.com/en-us/azure/foundry/fine-tuning/reinforcement-fine-tuning) for the current list). This constraint may limit grader design — plan accordingly.
 
 ---
 
 ## 7. When to Use RFT vs SFT
 
-Based on our 57-model experiment across 8 rounds:
-
-| Method | Best Combined Score | vs Base o4-mini (8.64) |
-|--------|-------------------|----------------------|
-| SFT (Mini R8 LD-LowLR) | **9.15** | **+5.9%** |
-| RFT R5 (best RFT) | 8.40 | -2.8% |
-| RFT R7 (aligned graders) | 6.84 | -20.8% |
+| Method | Best for |
+|--------|----------|
+| **SFT** | Most tasks — simpler, more predictable, and often outperforms RFT |
+| **RFT** | Tasks with verifiable answers (math, code with tests, formal logic) where multi-step reasoning is needed |
 
 ### Guidance
 
-- **Start with SFT** for most tasks—it's simpler, more predictable, and outperformed RFT in our experiments
+- **Start with SFT** for most tasks — it's simpler and more predictable
 - **Use RFT when**:
   - (a) You have verifiable answers (math proofs, code with test suites, formal logic)
   - (b) You need the model to develop multi-step reasoning
   - (c) SFT has plateaued and you need to push further
 - **If SFT gives you 90%+ of what you need, stick with SFT**
-- RFT grader options on Azure are limited (gpt-4o and o3-mini only)—this constrains grader design significantly
+- RFT grader quality is the limiting factor — invest there before tuning hyperparameters
 
-### Why RFT underperformed in our case
-The core issue was **grader limitations**, not RFT as a methodology:
-1. AST graders (R2–R6) were hackable → reward hacking, train-val gap 0.24–0.27
-2. LLM graders (R7–R8) eliminated hacking but introduced preference misalignment (gpt-4o ≠ GPT-5.4 on conciseness)
-3. With only gpt-4o and o3-mini available as RFT graders on Azure, matching a GPT-5.4 eval judge is impossible today
+### Common RFT pitfalls
+1. **Hackable graders**: Structural/syntax graders are easily gamed → use semantic LLM judges
+2. **Preference misalignment**: Training grader and eval judge disagree on style → use the same model family
+3. **Limited grader model options**: Azure RFT grader support is constrained → plan around available models
 
 ---
 
@@ -193,5 +181,5 @@ Quick reference for spotting reward hacking. If **any** of these are true, inves
 | Cross-validate before training | Spearman ρ ≥ 0.8 between training and eval graders |
 | Monitor train-val gap | ≤ 0.05 healthy, > 0.10 stop training |
 | Test hackability upfront | Bad outputs should score < 5/10 on your grader |
-| Prefer SFT when possible | SFT outperformed RFT in our 57-model experiment (+5.9% vs -2.8%) |
+| Prefer SFT when possible | SFT is simpler and often outperforms RFT — use RFT only for verifiable-answer tasks |
 | Iterate graders, not just models | When hacking is detected, fix the grader before restarting training |
