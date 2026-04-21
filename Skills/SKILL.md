@@ -25,6 +25,7 @@ $ARGUMENTS
 
 Read the workflow file that matches the user's current stage:
 
+- **First time / just want to get started** → `workflows/quickstart.md`
 - **Starting from scratch** → `workflows/full-pipeline.md`
 - **Need a dataset** → `workflows/dataset-creation.md`
 - **Training and iterating** → `workflows/iterative-training.md`
