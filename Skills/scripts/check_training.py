@@ -15,12 +15,13 @@ Usage:
 """
 
 import argparse
-from common import HelpOnErrorParser
 import csv
 import io
 import json
 import os
 import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from common import HelpOnErrorParser
 
 import openai
 

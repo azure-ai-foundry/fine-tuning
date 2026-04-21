@@ -30,13 +30,14 @@ Usage:
 """
 
 import argparse
-from common import HelpOnErrorParser
 import json
 import os
 import re
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from common import HelpOnErrorParser
 
 import openai
 

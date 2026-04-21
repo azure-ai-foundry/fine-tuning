@@ -26,11 +26,13 @@ Usage:
 """
 
 import argparse
-from common import HelpOnErrorParser
 import json
 import os
 import sys
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from common import HelpOnErrorParser
 
 import openai
 import requests

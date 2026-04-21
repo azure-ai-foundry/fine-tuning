@@ -23,11 +23,12 @@ Usage:
 """
 
 import argparse
-from common import HelpOnErrorParser
 import json
 import os
 import sys
 import time
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from common import HelpOnErrorParser
 
 
 def parquet_to_sft(input_path, output_path, user_col, assistant_col, system_prompt=None):
@@ -98,7 +99,7 @@ def sft_to_dpo(input_path, output_path, endpoint, api_key, base_model):
 
             # Generate a non-preferred response from the base model
             try:
-                gen_msgs = [user_msg]
+                gen_msgs = system_msgs + [user_msg]
                 resp = client.chat.completions.create(
                     model=base_model,
                     messages=gen_msgs,
