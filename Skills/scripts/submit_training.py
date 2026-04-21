@@ -1,6 +1,7 @@
 # /// script
 # dependencies = [
 #   "openai>=1.0",
+#   "requests",
 #   "azure-identity",
 #   "azure-ai-projects",
 # ]
@@ -189,7 +190,8 @@ def main():
             if not args.grader_file:
                 print("Error: --grader-file required for RFT")
                 sys.exit(1)
-            grader_source = open(args.grader_file).read()
+            with open(args.grader_file) as f:
+                grader_source = f.read()
             result = submit_rft(client, args.model, train_id, val_id, grader_source)
         elif args.type == "dpo":
             job = client.fine_tuning.jobs.create(
