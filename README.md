@@ -7,6 +7,7 @@ This repository contains **12 end-to-end demos** and **sample datasets** for fin
 - [Quick Start](#-quick-start)
 - [Demos](#-demos)
 - [Sample Datasets](#-sample-datasets)
+- [AI Agent Skills](#-ai-agent-skills)
 - [Prerequisites](#-prerequisites)
 - [Contributing](#contributing)
 
@@ -63,6 +64,71 @@ Ready-to-use datasets for testing fine-tuning techniques in the **[Sample_Datase
 👉 See **[Sample_Datasets/README.md](Sample_Datasets/README.md)** for data format details and when to use each technique.
 
 > ⚠️ **Note**: These datasets are for **learning and experimentation only**—not for production use. Training jobs may incur costs on your Azure subscription.
+
+---
+
+## 🤖 AI Agent Skills
+
+This repo includes the same fine-tuning skill content for multiple coding agents.
+
+- **GitHub Copilot** skills: **[.github/skills](.github/skills/)**
+- **Claude Code** skills: **[.claude/skills](.claude/skills/)**
+- **Codex-compatible agents** skills: **[.agents/skills](.agents/skills/)**
+
+The goal is to keep skill guidance **agent-agnostic** so you can use the same workflows (for example, submitting and monitoring fine-tuning jobs) regardless of the assistant.
+
+### How to use with GitHub Copilot + VS Code
+
+1. Open this repository in **VS Code** with the **GitHub Copilot Chat** extension enabled.
+2. Ask a task in Copilot Chat from the repo context (for example: "help me submit an SFT job with my dataset").
+3. Copilot will match relevant skills from **[.github/skills](.github/skills/)** when your request aligns with a skill description.
+4. If available in your version, invoke a skill slash command directly in chat.
+
+### How to use with Copilot CLI
+
+Use `copilot` from the repository root so it can discover workspace skills in **[.github/skills](.github/skills/)**.
+
+1. Verify the CLI is installed:
+
+	```bash
+	copilot --version
+	```
+
+2. Start a chat session from this repo root:
+
+	```bash
+	cd /path/to/root_of_repo
+	copilot
+	```
+
+3. Ask for the same type of task you would ask in chat, for example:
+
+	```text
+	Help me submit an SFT job with my dataset.
+	```
+
+4. If your CLI version supports slash commands, invoke the skill directly:
+
+	```text
+	/azure-foundry-finetuning
+	```
+
+5. Follow prompts for Azure project details, model, training file, and validation file, then run the suggested scripts.
+
+### How to use with Claude
+
+1. Open this repository in your Claude coding environment from the repo root.
+2. Ask for a fine-tuning workflow task in natural language.
+3. Claude can use skills from **[.claude/skills](.claude/skills/)** when your prompt matches the skill scope.
+4. Follow the generated steps/scripts and provide required Azure inputs when prompted.
+
+### How to use with Codex
+
+1. Open this repository in a Codex-compatible coding agent environment from the repo root.
+2. Ask for the task you want to perform (for example, setting up SFT submission or monitoring a job).
+3. The agent can apply skills from **[.agents/skills](.agents/skills/)** when the request matches a skill.
+4. Run the suggested commands and scripts with your Azure project configuration.
+
 
 ---
 
