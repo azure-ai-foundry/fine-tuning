@@ -27,10 +27,11 @@ How to systematically improve a fine-tuned model through successive experiments.
 
 Keep a spreadsheet or JSON with every run:
 
-| Run | Base model | Dataset | Epochs | LR | Batch | Best val_loss | Combined eval |
-|-----|-----------|---------|--------|-----|-------|--------------|---------------|
-| R1 | gpt-4.1-mini | v1 (335 ex) | 2 | 1.0 | default | 0.320 | 8.05 |
-| R2 | gpt-4.1-mini | v1 (335 ex) | 2 | 0.5 | default | 0.310 | 9.15 |
+| Run | Base model | Dataset | Epochs | LR | Batch | Best val_loss | Eval score |
+|-----|-----------|---------|--------|-----|-------|--------------|------------|
+| R1 | gpt-4.1-mini | v1 (200 ex) | 2 | 1.0 | default | 0.320 | 7.8 |
+| R2 | gpt-4.1-mini | v1 (200 ex) | 2 | 0.5 | default | 0.310 | 8.4 |
+| R3 | gpt-4.1-mini | v2 (400 ex) | 2 | 0.5 | default | 0.275 | 8.9 |
 | ... | ... | ... | ... | ... | ... | ... | ... |
 
 ## What to Try (In Priority Order)

@@ -153,10 +153,7 @@ See `scripts/convert_dataset.py` for automated conversion utilities.
 | DPO | 200 | 500–1,000 | > 5,000 |
 | RFT | 100 | 200–500 | > 1,000 |
 
-**Key finding**: More data doesn't always help. In experiments with code generation:
-- 335 high-quality examples → combined score 9.15 (best overall)
-- 1,576 examples (including lower quality) → higher correctness but lower conciseness, combined 8.53
-- The larger dataset taught the model to be more thorough but also more verbose
+**Key finding**: More data doesn't always help. A smaller, high-quality dataset often outperforms a larger, noisier one. Quality filtering matters more than raw volume — aggressively filter for correctness and consistency before scaling up.
 
 ## Data Quality Signals
 

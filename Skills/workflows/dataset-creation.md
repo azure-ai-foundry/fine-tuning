@@ -358,11 +358,9 @@ Before training, verify:
 
 ## Dataset Size vs. Quality Tradeoff
 
-From experiments:
-- **335 high-quality examples** (carefully curated) → best combined eval score (9.15)
-- **1,576 examples** (broader but noisier) → higher correctness but lower conciseness (8.53)
+A small, high-quality dataset usually outperforms a larger, noisier one. More data can actually hurt if it introduces inconsistency or low-quality examples — the model learns to be verbose or imprecise.
 
-**Takeaway**: A small, pristine dataset usually beats a large, noisy one. Quality filter aggressively.
+**Takeaway**: Start with 200–500 carefully curated examples. Evaluate results, then decide if you need more data. Quality filter aggressively before scaling up.
 
 ## Reference
 
