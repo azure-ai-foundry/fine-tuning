@@ -23,6 +23,7 @@ Usage:
 """
 
 import argparse
+from common import HelpOnErrorParser
 import json
 import os
 import re
@@ -99,7 +100,7 @@ def score_example(client, model, user_content, assistant_content, dimensions):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Score training data quality with LLM judge")
+    parser = HelpOnErrorParser(description="Score training data quality with LLM judge")
     parser.add_argument("--endpoint", default=os.environ.get("AZURE_OPENAI_ENDPOINT"))
     parser.add_argument("--api-key", default=os.environ.get("AZURE_OPENAI_API_KEY"))
     parser.add_argument("--model", default="gpt-4o", help="Judge model")

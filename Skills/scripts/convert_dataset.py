@@ -23,6 +23,7 @@ Usage:
 """
 
 import argparse
+from common import HelpOnErrorParser
 import json
 import os
 import sys
@@ -159,7 +160,7 @@ def dpo_to_sft(input_path, output_path, system_prompt=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Convert between fine-tuning dataset formats")
+    parser = HelpOnErrorParser(description="Convert between fine-tuning dataset formats")
     parser.add_argument("--input", required=True, help="Input file path")
     parser.add_argument("--output", required=True, help="Output file path")
     parser.add_argument("--format", required=True,

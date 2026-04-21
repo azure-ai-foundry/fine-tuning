@@ -62,11 +62,13 @@ def get_clients(base_url=None, azure_endpoint=None, project_endpoint=None, api_k
                 client = openai.OpenAI(base_url=base_url, api_key=token.token)
                 print(f"✅ Connected via /v1/ project endpoint (DefaultAzureCredential)")
                 return client, "project-v1-aad"
-            except Exception:
-                pass
-        client = openai.OpenAI(base_url=base_url, api_key=api_key)
-        print(f"✅ Connected via /v1/ project endpoint")
-        return client, "project-v1"
+            except Exception as e:
+                print(f"⚠️ No API key and DefaultAzureCredential failed: {e}")
+                # Fall through to Method 2/3
+        else:
+            client = openai.OpenAI(base_url=base_url, api_key=api_key)
+            print(f"✅ Connected via /v1/ project endpoint")
+            return client, "project-v1"
 
     # Method 2: Foundry SDK
     project_endpoint = project_endpoint or os.environ.get("AZURE_AI_PROJECT_ENDPOINT")

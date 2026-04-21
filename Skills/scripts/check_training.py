@@ -15,6 +15,7 @@ Usage:
 """
 
 import argparse
+from common import HelpOnErrorParser
 import csv
 import io
 import json
@@ -167,7 +168,7 @@ def analyze_job(client, job_id, download_csv=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Analyze fine-tuning training curves")
+    parser = HelpOnErrorParser(description="Analyze fine-tuning training curves")
     parser.add_argument("--base-url", default=os.environ.get("OPENAI_BASE_URL"),
                         help="Project /v1/ URL (preferred). Uses openai.OpenAI().")
     parser.add_argument("--endpoint", default=os.environ.get("AZURE_OPENAI_ENDPOINT"),

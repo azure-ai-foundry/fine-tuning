@@ -26,6 +26,7 @@ Usage:
 """
 
 import argparse
+from common import HelpOnErrorParser
 import json
 import os
 import sys
@@ -124,7 +125,7 @@ def submit_rft(client, model, train_id, val_id, grader_source):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Submit fine-tuning jobs on Azure AI Foundry")
+    parser = HelpOnErrorParser(description="Submit fine-tuning jobs on Azure AI Foundry")
     parser.add_argument("--base-url", default=os.environ.get("OPENAI_BASE_URL"),
                         help="Project /v1/ URL (preferred). Uses openai.OpenAI().")
     parser.add_argument("--endpoint", default=os.environ.get("AZURE_OPENAI_ENDPOINT"),

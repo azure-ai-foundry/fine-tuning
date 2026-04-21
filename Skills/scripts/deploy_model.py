@@ -17,6 +17,7 @@ Usage:
 """
 
 import argparse
+from common import HelpOnErrorParser
 import json
 import os
 import subprocess
@@ -173,7 +174,7 @@ def list_deployments(sub, rg, account):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Deploy fine-tuned models on Azure AI Foundry")
+    parser = HelpOnErrorParser(description="Deploy fine-tuned models on Azure AI Foundry")
     parser.add_argument("--sub", default=DEFAULT_SUB, help="Azure subscription ID")
     parser.add_argument("--rg", default=DEFAULT_RG, help="Resource group")
     parser.add_argument("--account", default=DEFAULT_ACCOUNT, help="Cognitive Services account")

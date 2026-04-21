@@ -30,6 +30,7 @@ Usage:
 """
 
 import argparse
+from common import HelpOnErrorParser
 import json
 import os
 import re
@@ -155,7 +156,7 @@ def grade_response(judge_client, judge_model, prompt, reference, output, max_ret
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate a fine-tuned model with LLM judge")
+    parser = HelpOnErrorParser(description="Evaluate a fine-tuned model with LLM judge")
     parser.add_argument("--base-url", default=os.environ.get("OPENAI_BASE_URL"),
                         help="Project /v1/ URL (preferred). Uses openai.OpenAI().")
     parser.add_argument("--endpoint", default=os.environ.get("AZURE_OPENAI_ENDPOINT"),

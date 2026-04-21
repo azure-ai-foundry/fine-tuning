@@ -31,6 +31,7 @@ Usage:
 """
 
 import argparse
+from common import HelpOnErrorParser
 import json
 import os
 import random
@@ -129,7 +130,7 @@ def grade_output(client, judge_model, output, retries=3):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate distillation training data from a teacher model")
+    parser = HelpOnErrorParser(description="Generate distillation training data from a teacher model")
     parser.add_argument("--endpoint", default=os.environ.get("AZURE_OPENAI_ENDPOINT"))
     parser.add_argument("--api-key", default=os.environ.get("AZURE_OPENAI_API_KEY"))
     parser.add_argument("--teacher", required=True, help="Teacher model deployment name")
