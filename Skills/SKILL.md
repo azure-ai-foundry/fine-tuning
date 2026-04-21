@@ -67,6 +67,7 @@ Reusable Python scripts in `scripts/`. Each is self-contained with inline docume
 | `generate_distillation_data.py` | Generate training data from a teacher model for distillation |
 | `check_training.py` | Pull training curves, detect overfitting, list checkpoints |
 | `deploy_model.py` | Deploy fine-tuned models via ARM REST API |
+| `cleanup.py` | List and delete old deployments, files, and pending jobs to reclaim quota |
 | `evaluate_model.py` | Run held-out eval with 2-dimension LLM judge |
 | `convert_dataset.py` | Convert between SFT, DPO, and RFT JSONL formats |
 | `score_dataset.py` | LLM-judge quality scoring on training data |
