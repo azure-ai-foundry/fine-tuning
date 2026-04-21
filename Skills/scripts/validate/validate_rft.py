@@ -80,10 +80,11 @@ def validate_rft(filepath: str, expected_field: str | None = None) -> None:
                     # Check for grader escaping issues (CRITICAL platform gotcha)
                     for field in extra_fields:
                         val = str(record[field])
-                        if "\\n" in val and "\\\\n" not in raw_line:
+                        if "\n" in val:
                             warnings.append(
-                                f"Line {line_num}: '{field}' contains literal newlines — "
-                                "grader may fail. Use \\\\n in the JSON string."
+                                f"Line {line_num}: '{field}' contains newlines — "
+                                "if this is grader source code embedded in JSON, "
+                                "ensure newlines are escaped as \\\\n."
                             )
 
             # Content moderation risk

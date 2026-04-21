@@ -1,6 +1,7 @@
 # /// script
 # dependencies = [
 #   "openai>=1.0",
+#   "requests",
 #   "azure-identity",
 # ]
 # ///

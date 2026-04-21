@@ -61,6 +61,8 @@ Reusable Python scripts in `scripts/`. Each is self-contained with inline docume
 | Script | Purpose |
 |--------|---------|
 | `submit_training.py` | Submit SFT or RFT jobs (SDK + REST fallback) |
+| `monitor_training.py` | Poll a running job until completion, streaming events in real time |
+| `calibrate_grader.py` | Run base model through your RFT grader to find optimal pass_threshold |
 | `generate_distillation_data.py` | Generate training data from a teacher model for distillation |
 | `check_training.py` | Pull training curves, detect overfitting, list checkpoints |
 | `deploy_model.py` | Deploy fine-tuned models via ARM REST API |

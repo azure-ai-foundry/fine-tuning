@@ -92,11 +92,17 @@ def load_test_data(filepath):
     """
     data = []
     with open(filepath) as f:
-        for line in f:
+        for i, line in enumerate(f):
             ex = json.loads(line)
             msgs = ex["messages"]
-            prompt = next(m["content"] for m in msgs if m["role"] == "user")
-            reference = next(m["content"] for m in msgs if m["role"] == "assistant")
+            prompt = next((m["content"] for m in msgs if m["role"] == "user"), None)
+            reference = next((m["content"] for m in msgs if m["role"] == "assistant"), None)
+            if not prompt:
+                print(f"⚠️ Skipping example {i}: missing 'user' message")
+                continue
+            if not reference:
+                print(f"⚠️ Skipping example {i}: missing 'assistant' message")
+                continue
             system_msgs = [m["content"] for m in msgs if m["role"] == "system"]
             system_prompt = system_msgs[0] if system_msgs else None
             data.append({"prompt": prompt, "reference": reference, "system_prompt": system_prompt})
