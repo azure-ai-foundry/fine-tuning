@@ -10,45 +10,48 @@ A **skill** is a structured set of instructions, reference documentation, and re
 
 | Stage | What the agent does |
 |-------|-------------------|
-| **Dataset creation** | Generate synthetic training data using Data Designer, or prepare existing data |
+| **Dataset creation** | Generate synthetic training data, curate examples, or augment with LLM rephrasings |
 | **Dataset validation** | Validate JSONL schema, token limits, and format for SFT / DPO / RFT |
 | **Base model evaluation** | Benchmark the un-tuned model to establish a baseline |
 | **Training type selection** | Choose between SFT, DPO, and RFT based on your task |
+| **Grader calibration** | For RFT: test your grader on base model outputs and find the optimal pass_threshold |
 | **Job submission** | Submit training jobs via SDK, REST API, or `azd` CLI |
-| **Training curve analysis** | Detect overfitting, recommend checkpoints |
+| **Job monitoring** | Poll running jobs with real-time event streaming |
+| **Training curve analysis** | Detect overfitting, monitor token growth, recommend checkpoints |
 | **Iterative experimentation** | Plan successive runs based on results |
 | **Model deployment** | Deploy fine-tuned models with the correct format and SKU |
-| **Model evaluation** | Score outputs with custom LLM judges |
+| **Model evaluation** | Score outputs with custom LLM judges, compare accuracy and token cost |
+| **Resource cleanup** | Delete old files and deployments to reclaim quota |
 
 ## Quick Start
 
-### 1. Install the skill
+### 1. Set up the skill
 
-**GitHub Copilot (VS Code / CLI):**
-Copy the `Skills/` directory into your project and reference `SKILL.md` in your Copilot instructions, or use it as a [Copilot custom instructions](https://docs.github.com/en/copilot/customizing-copilot/adding-repository-custom-instructions).
+**Auto-discovery (recommended):**
+If you cloned the [microsoft-foundry/fine-tuning](https://github.com/microsoft-foundry/fine-tuning) repo, coding agents auto-discover the skill via symlinks:
+- GitHub Copilot → `.github/skills/azure-ai-fine-tuning`
+- Claude Code → `.claude/skills/azure-ai-fine-tuning`
+- Codex / other agents → `.agents/skills/azure-ai-fine-tuning`
 
-**Claude Code:**
-Add the skill directory to your project and reference `SKILL.md` in your `CLAUDE.md` or system prompt.
+Just open the repo and start asking questions — no manual setup needed.
 
-**Any agent:**
-Point your agent at `SKILL.md` as a context file. It will discover the workflows, references, and scripts from there.
+**Manual setup:**
+Copy the `Skills/` directory into your project and reference `SKILL.md` in your agent's instructions file (`copilot-instructions.md`, `CLAUDE.md`, etc.).
 
 ### 2. Set up your environment
 
+**Option A: `uv` (zero-setup, recommended):**
+All scripts have [PEP 723](https://peps.python.org/pep-0723/) inline dependency declarations. Just run them with `uv`:
+```bash
+uv run Skills/scripts/submit_training.py --help
+```
+
+**Option B: Manual install:**
 ```bash
 cp Skills/.env.template Skills/.env
-# Edit .env with your Azure OpenAI endpoint, API key, and resource coordinates
-```
+# Edit .env with your Azure AI Foundry endpoint and API key
 
-Required Python packages:
-```bash
-pip install openai azure-identity tiktoken requests
-```
-
-Optional (for specific workflows):
-```bash
-pip install pandas pyarrow    # Dataset conversion and statistics
-pip install azure-ai-evaluation azure-ai-projects  # Azure AI Evaluation SDK integration
+pip install openai azure-identity requests
 ```
 
 ### 3. Start fine-tuning
@@ -64,7 +67,7 @@ The agent will read the appropriate workflow and guide you step by step.
 
 ```
 Skills/
-├── SKILL.md                          # Main skill file (entry point)
+├── SKILL.md                          # Main skill file (agent entry point)
 ├── .env.template                     # Environment variable template
 ├── README.md                         # This file
 ├── references/
@@ -73,7 +76,8 @@ Skills/
 │   ├── dataset-formats.md            # JSONL format specs for each training type
 │   ├── deployment-formats.md         # Model format, SKU, and version mapping
 │   ├── evaluation-methodology.md     # Eval rubric design and grader types
-│   ├── training-curve-analysis.md    # Reading training logs and curves
+│   ├── training-curve-analysis.md    # Reading training logs and curves (SFT + RFT)
+│   ├── grader-design.md             # RFT grader design (type selection, partial credit, calibration)
 │   ├── foundry-cli.md               # azd ai finetuning CLI reference
 │   ├── vision-fine-tuning.md         # Image/video fine-tuning (gpt-4o, gpt-4.1)
 │   ├── cost-management.md            # Training costs and budget planning
@@ -82,20 +86,24 @@ Skills/
 │   ├── reward-hacking-prevention.md  # Preventing reward hacking in RFT
 │   └── platform-bugs.md             # Known platform bugs and workarounds
 ├── workflows/
-│   ├── full-pipeline.md              # End-to-end workflow (start here)
-│   ├── dataset-creation.md           # Data generation with Data Designer
+│   ├── quickstart.md                 # 6-step quickstart (fine-tune your first model)
+│   ├── full-pipeline.md              # End-to-end workflow
+│   ├── dataset-creation.md           # Data generation (manual, LLM augmentation, synthetic)
 │   ├── iterative-training.md         # Training and HP tuning loop
 │   ├── diagnose-poor-results.md      # Troubleshooting bad results
 │   └── experiment-review.md          # Post-experiment review and next steps
 ├── scripts/
-│   ├── submit_training.py            # Submit SFT/RFT jobs (SDK + REST fallback)
-│   ├── generate_distillation_data.py # Generate distillation training data
-│   ├── check_training.py             # Training curve analysis
+│   ├── submit_training.py            # Submit SFT/DPO/RFT jobs (SDK + REST fallback)
+│   ├── monitor_training.py           # Poll a running job until completion
+│   ├── calibrate_grader.py           # RFT grader threshold calibration
+│   ├── check_training.py             # Training curve analysis and checkpoints
 │   ├── deploy_model.py               # Deploy via ARM REST API
 │   ├── evaluate_model.py             # LLM judge evaluation
 │   ├── convert_dataset.py            # Format conversion (SFT↔DPO↔RFT)
+│   ├── generate_distillation_data.py # Generate distillation training data
 │   ├── score_dataset.py              # Dataset quality scoring
-│   ├── common.py                     # Shared auth helpers
+│   ├── cleanup.py                    # Delete old files, deployments, pending jobs
+│   ├── common.py                     # Shared auth helpers + HelpOnErrorParser
 │   └── validate/
 │       ├── validate_sft.py           # SFT JSONL validator
 │       ├── validate_dpo.py           # DPO JSONL validator
@@ -137,8 +145,10 @@ Key patterns encoded in this skill:
 
 - **Start with SFT distillation** — the most reliable fine-tuning pattern, achieving high teacher gap closure with 200–500 examples
 - **Always baseline first** — evaluate the base model before fine-tuning to confirm there's room for improvement
+- **Calibrate your RFT grader** — target 25-50% failure rate on the base model; recalibrate when you change your dataset
+- **Python grader as default for RFT** — fast, deterministic, and reliable; endpoint graders only when you need external API calls during grading
 - **DPO is risky when the base is already strong** — it can degrade quality if the model already handles the task well
-- **RFT is for verifiable tasks** — math, code with test suites, structured output with exact-match graders
+- **Measure cost alongside accuracy** — compare completion tokens per response, not just accuracy scores
 - **Quality over quantity** — 200–500 high-quality examples is a good starting point
 
 ## Contributing
