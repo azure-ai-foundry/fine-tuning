@@ -1,16 +1,79 @@
 # Dataset Creation Workflow
 
-> **Two paths to training data:**
-> 1. **Manual** — Prepare your own JSONL file following the formats in `references/dataset-formats.md`
-> 2. **Synthetic generation** — Use NVIDIA Data Designer (below) to generate training data from an LLM
+> **Three paths to training data:**
+> 1. **Manual curation** — Write examples by hand or collect from production data, following the formats in `references/dataset-formats.md`
+> 2. **LLM augmentation** — Start with a small curated set and use an LLM to expand it through rephrasing and variation
+> 3. **Synthetic generation** — Generate training data from scratch using LLM prompts or NVIDIA Data Designer
+>
+> These approaches combine well: curate seed examples → augment for diversity → generate at scale.
 >
 > If you already have data, skip to validation: `python scripts/validate/validate_sft.py your_data.jsonl`
 
-Two approaches for generating synthetic training data. Choose based on your needs.
+## Approach 1: Manual Curation
 
-## Approach 1: NVIDIA Data Designer (Recommended for Production)
+Write examples by hand, collect from production logs, or adapt existing datasets. This gives you the highest quality per example.
 
-Use Data Designer when you need **large-scale, diverse, schema-driven** datasets with built-in quality control.
+### When to use
+- You have access to real-world examples (production logs, support tickets, labeled data)
+- Your task requires domain expertise that an LLM can't reliably generate
+- You need a gold-standard evaluation set (always curate this manually)
+
+### Tips
+- Start with 10–20 examples to establish quality standards and format consistency
+- These seed examples also serve as the foundation of your evaluation test set
+- For RFT, you only need prompts + expected answers — no model responses needed
+
+## Approach 2: LLM Augmentation
+
+If you have a small manually curated dataset, you can use an LLM to expand it through **rephrasing** — generating diverse variations of each example while keeping the same expected answer.
+
+This is especially useful for RFT, where training data is just prompts + expected answers (no model responses needed).
+
+### When to use
+- You have a well-defined task with clear correct answers
+- You can write quality examples by hand but need more volume
+- Diversity of phrasing matters more than diversity of scenarios
+
+### Workflow
+1. Write base examples by hand — each with the correct expected answer
+2. For each example, use an LLM to generate rephrasings that vary tone, detail level, and wording
+3. Each rephrasing gets the same `expected_answer` / `expected_resolution` — only the customer phrasing changes
+4. Validate the augmented dataset
+
+### Example prompt for rephrasing
+```
+Generate N different phrasings of this request. Each should:
+- Use different wording, tone, or level of detail
+- Include the same key identifiers (order IDs, item names)
+- Vary between formal, casual, frustrated, brief, and detailed styles
+Return a JSON array of N strings.
+
+Original: [your example]
+```
+
+A cheap model (gpt-4.1-mini or equivalent) works well for rephrasing since no new ground truth is needed — you're just diversifying how the same question is asked.
+
+## Approach 3: Synthetic Generation
+
+Generate training data from scratch using LLM prompts. Two options depending on scale and complexity.
+
+### Option A: Custom Prompt-Driven Scripts
+
+Use custom scripts when you want **full control** over generation logic.
+
+See `scripts/generate_distillation_data.py` for a reusable template, or write a script that:
+
+1. Defines topic/scenario categories for diversity
+2. Generates prompts from an LLM
+3. Generates responses (or preferred/non-preferred pairs for DPO)
+4. Grades quality with an LLM judge
+5. Filters to a quality threshold
+6. Splits into train/validation/test sets
+7. Writes JSONL in the correct format (see `references/dataset-formats.md`)
+
+### Option B: NVIDIA Data Designer
+
+Use Data Designer when you need **large-scale, schema-driven** datasets with built-in diversity control, quality judges, and reproducible configs.
 
 ### Prerequisites
 ```bash
@@ -281,27 +344,6 @@ Or use `scripts/convert_dataset.py` for automated conversion.
 | **Reproducibility** | Config-driven, versioned | Ad-hoc scripts |
 | **Setup time** | Moderate (install + configure) | Minimal |
 | **Flexibility** | High (but within framework) | Unlimited |
-
-## Approach 2: Custom Prompt-Driven Generation
-
-Use custom scripts for **quick prototyping** or when you need **full control** with smaller datasets.
-
-See `scripts/generate_distillation_data.py` for a reusable template, or write a script that:
-
-1. Defines topic/scenario categories for diversity
-2. Generates prompts from an LLM teacher
-3. Generates responses (or preferred/non-preferred pairs for DPO)
-4. Grades quality with an LLM judge
-5. Filters to a quality threshold
-6. Splits into train/validation/test sets
-7. Writes JSONL in the correct format (see `references/dataset-formats.md`)
-
-## Step-by-Step: Seed Examples
-
-Regardless of approach, write **10–20 examples by hand** first:
-- Quality benchmarks for synthetic generation
-- Foundation of your evaluation test set
-- Seed data for Data Designer (optional)
 
 ## Quality Signals to Check
 

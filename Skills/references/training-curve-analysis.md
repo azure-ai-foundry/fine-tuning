@@ -145,3 +145,63 @@ if job.result_files:
     with open("results.csv", "wb") as f:
         f.write(content.read())
 ```
+
+## RFT-Specific Metrics
+
+RFT training produces different metrics than SFT. The result CSV includes:
+
+| Column | What it means |
+|--------|---------------|
+| `train_mean_reward` | Average reward across training rollouts (primary metric — should increase) |
+| `full_valid_mean_reward` | Validation reward (check for overfitting) |
+| `completion_tokens_mean` | Average response length per rollout |
+| `reasoning_tokens_mean` | Average reasoning/thinking tokens per rollout (o-series models) |
+| `mean_unresponsive_rewards` | Rollouts that produced no scoreable output |
+| `errors/graders/.../train_sample_parse_error_count` | Rollouts where the grader couldn't parse the output |
+| `errors/graders/.../train_other_error_count` | Grader logic errors (bugs) |
+| `train_error_count_<tool_name>` | Tool call failures during training |
+
+### Reading RFT Reward Curves
+
+**Healthy RFT training**: `train_mean_reward` starts near 0 (or negative) and climbs steadily. Validation reward tracks similarly with a small gap.
+
+**Warning signs**:
+- Reward flat at ~0 for many steps → grader is broken or threshold is too strict
+- Reward always negative → pass_threshold is too high, all rollouts fail
+- Reward immediately high and stays flat → threshold is too lenient, all rollouts pass
+- Large train-valid reward gap (>0.10) → possible reward hacking (see `references/reward-hacking-prevention.md`)
+
+### Monitor Token Growth
+
+During RFT, `completion_tokens_mean` and `reasoning_tokens_mean` often increase as the model learns to write more detailed responses and "think harder." Monitor these:
+
+- **Moderate growth** (tokens double) → normal, model is becoming more thorough
+- **Excessive growth** (tokens 3x+) → the grader may be incentivizing verbosity over precision. Check whether your scoring dimensions inadvertently reward length.
+- **When comparing checkpoints or experiments**, factor in token cost. Equal accuracy at fewer tokens is strictly better — the model is cheaper and faster at inference.
+
+### Grader Parse Errors vs Logic Errors
+
+In agentic RFT (with tool calling), some grader parse errors are normal. These occur when the grader receives a rollout captured mid-reasoning (before the model finished its response). The key distinction:
+
+- **`sample_parse_error_count`** — often high in agentic RFT. Training still works if reward is climbing. Don't panic.
+- **`other_error_count`** — indicates bugs in your grader logic. Should be 0 or very low. If this is high, fix your grader before continuing.
+
+### RFT Checkpoint Selection
+
+For RFT, checkpoint selection works differently than SFT:
+
+1. List checkpoints: `client.fine_tuning.jobs.checkpoints.list(job_id)`
+2. **Don't rely solely on `valid_reward`** — it may not perfectly predict real-world performance (especially in agentic RFT where validation evals may not execute tools)
+3. Deploy 2-3 candidates: the peak valid_reward checkpoint, the final checkpoint, and one mid-training
+4. Evaluate each with your **real task harness** (including tool execution if agentic)
+5. Compare on **both accuracy and token cost** — pick the model that maximizes accuracy per token
+
+```python
+checkpoints = client.fine_tuning.jobs.checkpoints.list(job_id)
+for cp in checkpoints:
+    m = cp.metrics
+    tr = f"{m.train_mean_reward:.3f}" if m.train_mean_reward is not None else "n/a"
+    vr = f"{m.full_valid_mean_reward:.3f}" if m.full_valid_mean_reward is not None else "n/a"
+    ct = f"{m.completion_tokens_mean:.0f}" if m.completion_tokens_mean is not None else "n/a"
+    print(f"Step {cp.step_number}: train_reward={tr}, valid_reward={vr}, tokens={ct}")
+```
