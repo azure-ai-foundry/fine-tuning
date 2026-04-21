@@ -33,13 +33,33 @@ Ensure you have these roles on your Azure AI Foundry project:
 ## Step 1: Clone the Repository
 
 ```bash
-git clone https://github.com/Azure/fine-tuning.git
+git clone https://github.com/microsoft-foundry/fine-tuning.git
 cd fine-tuning
 ```
 
 ---
 
-## Step 2: Choose Your First Demo
+## Step 2: Choose Your Path
+
+### Option A: AI-Assisted (Recommended)
+
+If you have **GitHub Copilot**, **Claude Code**, or another coding agent:
+
+1. Open this repo in your editor (VS Code, cursor, etc.)
+2. Ask your coding agent: *"Help me fine-tune a model on my data"*
+3. The agent auto-discovers the fine-tuning skill and guides you through:
+   - Data preparation and validation
+   - Job submission with correct parameters
+   - Monitoring and training curve analysis
+   - Deployment and evaluation
+
+Or follow the step-by-step quickstart without an agent: **[Skills/workflows/quickstart.md](Skills/workflows/quickstart.md)**
+
+### Option B: Follow a Demo Notebook
+
+If you prefer to follow a notebook manually, continue below.
+
+## Step 3: Choose Your First Demo
 
 We recommend starting with **Supervised Fine-Tuning (SFT)** as it covers the most common use cases.
 
@@ -53,7 +73,7 @@ We recommend starting with **Supervised Fine-Tuning (SFT)** as it covers the mos
 
 ---
 
-## Step 3: Set Up the Demo Environment
+## Step 4: Set Up the Demo Environment
 
 Navigate to your chosen demo folder:
 
@@ -93,7 +113,7 @@ pip install -r requirements.txt
 
 ---
 
-## Step 4: Run the Notebook
+## Step 5: Run the Notebook
 
 1. Open the notebook in VS Code or Jupyter:
    ```bash
@@ -110,7 +130,7 @@ pip install -r requirements.txt
 
 ---
 
-## Step 5: Understand the Data Format
+## Step 6: Understand the Data Format
 
 Each fine-tuning technique requires a specific data format. See the schema documentation:
 
