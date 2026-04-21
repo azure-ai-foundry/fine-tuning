@@ -61,7 +61,11 @@ resp = client.chat.completions.create(
 )
 
 # Parse and convert to training format
-examples = json.loads(resp.choices[0].message.content.strip().strip("`").replace("json\n", ""))
+import re
+content = resp.choices[0].message.content
+match = re.search(r'```(?:json)?\s*\n(.*?)\n```', content, re.DOTALL)
+json_str = match.group(1) if match else content.strip().strip("`").replace("json\n", "")
+examples = json.loads(json_str)
 
 with open("train.jsonl", "w") as f:
     for ex in examples[:40]:  # 40 for training
