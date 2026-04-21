@@ -2,14 +2,14 @@
 
 ## The Problem
 
-The standard `client.files.create()` method silently fails on JSONL files larger than ~150MB. Azure returns a 500 server error during fine-tuning job execution, with no indication that the file upload itself was the issue. This is especially confusing because the upload step appears to succeed.
+The standard `client.files.create()` method silently fails on JSONL files larger than roughly 150MB. Azure returns a 500 server error during fine-tuning job execution, with no indication that the file upload itself was the issue. This is especially confusing because the upload step appears to succeed.
 
 ## Solution: Chunked Uploads API
 
-For files over 100MB, use the OpenAI Uploads API which splits the file into chunks:
+For large files, use the OpenAI Uploads API which splits the file into chunks. The `upload_file()` helper in `common.py` triggers this automatically at 100MB (a safety margin below the ~150MB failure point):
 
 ```python
-import math
+import os
 import openai
 
 client = openai.AzureOpenAI(
@@ -54,7 +54,7 @@ file_id = completed.file.id  # Use this for fine-tuning
 | File Size | Method | Function |
 |-----------|--------|----------|
 | < 100MB | Standard `files.create()` | `upload_file()` (auto) |
-| 100MB – 5GB | Chunked Uploads API | `upload_file()` (auto) |
+| 100MB+ | Chunked Uploads API | `upload_file()` (auto, needs `AzureOpenAI` client) |
 | > 5GB | Split dataset into multiple files | Manual |
 
 ## Symptoms of the Silent Failure
