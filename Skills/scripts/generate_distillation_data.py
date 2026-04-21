@@ -1,3 +1,9 @@
+# /// script
+# dependencies = [
+#   "openai>=1.0",
+#   "azure-identity",
+# ]
+# ///
 """
 generate_distillation_data.py — Generate training data from a teacher model for distillation.
 
@@ -31,6 +37,8 @@ import random
 import re
 import sys
 import time
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from common import HelpOnErrorParser
 
 import openai
 
@@ -123,7 +131,7 @@ def grade_output(client, judge_model, output, retries=3):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate distillation training data from a teacher model")
+    parser = HelpOnErrorParser(description="Generate distillation training data from a teacher model")
     parser.add_argument("--endpoint", default=os.environ.get("AZURE_OPENAI_ENDPOINT"))
     parser.add_argument("--api-key", default=os.environ.get("AZURE_OPENAI_API_KEY"))
     parser.add_argument("--teacher", required=True, help="Teacher model deployment name")

@@ -1,3 +1,9 @@
+# /// script
+# dependencies = [
+#   "openai>=1.0",
+#   "azure-identity",
+# ]
+# ///
 """
 score_dataset.py — Assess training data quality using an LLM judge.
 
@@ -23,6 +29,8 @@ import re
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from common import HelpOnErrorParser
 
 import openai
 
@@ -93,7 +101,7 @@ def score_example(client, model, user_content, assistant_content, dimensions):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Score training data quality with LLM judge")
+    parser = HelpOnErrorParser(description="Score training data quality with LLM judge")
     parser.add_argument("--endpoint", default=os.environ.get("AZURE_OPENAI_ENDPOINT"))
     parser.add_argument("--api-key", default=os.environ.get("AZURE_OPENAI_API_KEY"))
     parser.add_argument("--model", default="gpt-4o", help="Judge model")

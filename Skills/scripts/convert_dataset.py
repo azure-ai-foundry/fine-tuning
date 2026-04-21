@@ -1,3 +1,8 @@
+# /// script
+# dependencies = [
+#   "openai>=1.0",
+# ]
+# ///
 """
 convert_dataset.py — Convert between SFT, DPO, and RFT dataset formats.
 
@@ -22,6 +27,8 @@ import json
 import os
 import sys
 import time
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from common import HelpOnErrorParser
 
 
 def parquet_to_sft(input_path, output_path, user_col, assistant_col, system_prompt=None):
@@ -92,7 +99,7 @@ def sft_to_dpo(input_path, output_path, endpoint, api_key, base_model):
 
             # Generate a non-preferred response from the base model
             try:
-                gen_msgs = [user_msg]
+                gen_msgs = system_msgs + [user_msg]
                 resp = client.chat.completions.create(
                     model=base_model,
                     messages=gen_msgs,
@@ -154,7 +161,7 @@ def dpo_to_sft(input_path, output_path, system_prompt=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Convert between fine-tuning dataset formats")
+    parser = HelpOnErrorParser(description="Convert between fine-tuning dataset formats")
     parser.add_argument("--input", required=True, help="Input file path")
     parser.add_argument("--output", required=True, help="Output file path")
     parser.add_argument("--format", required=True,

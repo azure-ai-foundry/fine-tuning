@@ -7,6 +7,7 @@ This repository contains **12 end-to-end demos** and **sample datasets** for fin
 - [Quick Start](#-quick-start)
 - [Demos](#-demos)
 - [Sample Datasets](#-sample-datasets)
+- [AI Agent Skills](#-ai-agent-skills)
 - [Prerequisites](#-prerequisites)
 - [Contributing](#contributing)
 
@@ -63,6 +64,52 @@ Ready-to-use datasets for testing fine-tuning techniques in the **[Sample_Datase
 👉 See **[Sample_Datasets/README.md](Sample_Datasets/README.md)** for data format details and when to use each technique.
 
 > ⚠️ **Note**: These datasets are for **learning and experimentation only**—not for production use. Training jobs may incur costs on your Azure subscription.
+
+---
+
+## 🤖 AI Agent Skills
+
+This repo includes a fine-tuning skill that coding agents can auto-discover and use to help you submit, monitor, and evaluate fine-tuning jobs.
+
+| Agent | Skill Path | Auto-discovery |
+|-------|-----------|----------------|
+| **GitHub Copilot** (VS Code / CLI) | [.github/skills/azure-ai-fine-tuning](.github/skills/azure-ai-fine-tuning) | ✅ Automatic |
+| **Claude Code** | [.claude/skills/azure-ai-fine-tuning](.claude/skills/azure-ai-fine-tuning) | ✅ Automatic |
+| **Codex / other agents** | [.agents/skills/azure-ai-fine-tuning](.agents/skills/azure-ai-fine-tuning) | ✅ Automatic |
+
+All three paths are symlinks to the canonical skill at **[Skills/](Skills/)**, which includes:
+- **SKILL.md** — Agent instructions covering SFT, DPO, and RFT workflows
+- **8 scripts** — submit, monitor, deploy, evaluate, validate, score, convert, distill
+- **11 reference docs** — hyperparameters, dataset formats, agentic RFT, cost management, and more
+- **5 guided workflows** — full pipeline, dataset creation, iterative training, diagnosis
+- **Sample data** — SFT, DPO, and RFT example JSONL files
+
+### Using with GitHub Copilot (VS Code)
+
+1. Open this repo in VS Code with Copilot Chat enabled.
+2. Ask a fine-tuning task (e.g., *"help me submit an SFT job with my dataset"*).
+3. Copilot auto-discovers the skill from `.github/skills/` and follows the workflow.
+
+### Using with Copilot CLI
+
+```bash
+cd /path/to/this/repo
+copilot
+# Then ask: "Submit an SFT fine-tuning job with my training data"
+```
+
+### Using with Claude Code
+
+```bash
+cd /path/to/this/repo
+claude
+# Then ask: "Fine-tune gpt-4.1-mini on my dataset"
+```
+
+Scripts support `uv` for zero-setup execution (PEP 723 inline dependencies):
+```bash
+uv run Skills/scripts/submit_training.py --help
+```
 
 ---
 

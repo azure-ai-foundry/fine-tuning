@@ -1,3 +1,9 @@
+# /// script
+# dependencies = [
+#   "openai>=1.0",
+#   "azure-identity",
+# ]
+# ///
 """
 evaluate_model.py — Custom 2-dimension LLM judge evaluator for fine-tuned models.
 
@@ -30,6 +36,8 @@ import re
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from common import HelpOnErrorParser
 
 import openai
 
@@ -149,7 +157,7 @@ def grade_response(judge_client, judge_model, prompt, reference, output, max_ret
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate a fine-tuned model with LLM judge")
+    parser = HelpOnErrorParser(description="Evaluate a fine-tuned model with LLM judge")
     parser.add_argument("--base-url", default=os.environ.get("OPENAI_BASE_URL"),
                         help="Project /v1/ URL (preferred). Uses openai.OpenAI().")
     parser.add_argument("--endpoint", default=os.environ.get("AZURE_OPENAI_ENDPOINT"),

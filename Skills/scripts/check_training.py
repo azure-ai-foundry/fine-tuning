@@ -1,3 +1,10 @@
+# /// script
+# dependencies = [
+#   "openai>=1.0",
+#   "azure-identity",
+#   "azure-ai-projects",
+# ]
+# ///
 """
 check_training.py — Analyze training curves, detect overfitting, list checkpoints.
 
@@ -13,6 +20,8 @@ import io
 import json
 import os
 import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from common import HelpOnErrorParser
 
 import openai
 
@@ -160,7 +169,7 @@ def analyze_job(client, job_id, download_csv=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Analyze fine-tuning training curves")
+    parser = HelpOnErrorParser(description="Analyze fine-tuning training curves")
     parser.add_argument("--base-url", default=os.environ.get("OPENAI_BASE_URL"),
                         help="Project /v1/ URL (preferred). Uses openai.OpenAI().")
     parser.add_argument("--endpoint", default=os.environ.get("AZURE_OPENAI_ENDPOINT"),

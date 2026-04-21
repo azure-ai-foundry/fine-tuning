@@ -1,3 +1,10 @@
+# /// script
+# dependencies = [
+#   "openai>=1.0",
+#   "azure-identity",
+#   "azure-ai-projects",
+# ]
+# ///
 """
 submit_training.py — Submit SFT, DPO, or RFT training jobs on Azure AI Foundry.
 
@@ -23,6 +30,9 @@ import json
 import os
 import sys
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from common import HelpOnErrorParser
 
 import openai
 import requests
@@ -117,7 +127,7 @@ def submit_rft(client, model, train_id, val_id, grader_source):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Submit fine-tuning jobs on Azure AI Foundry")
+    parser = HelpOnErrorParser(description="Submit fine-tuning jobs on Azure AI Foundry")
     parser.add_argument("--base-url", default=os.environ.get("OPENAI_BASE_URL"),
                         help="Project /v1/ URL (preferred). Uses openai.OpenAI().")
     parser.add_argument("--endpoint", default=os.environ.get("AZURE_OPENAI_ENDPOINT"),

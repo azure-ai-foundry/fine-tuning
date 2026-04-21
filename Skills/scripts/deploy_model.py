@@ -1,3 +1,9 @@
+# /// script
+# dependencies = [
+#   "openai>=1.0",
+#   "azure-identity",
+# ]
+# ///
 """
 deploy_model.py — Deploy fine-tuned models on Azure AI Foundry via ARM REST API.
 
@@ -16,6 +22,8 @@ import os
 import subprocess
 import sys
 import time
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from common import HelpOnErrorParser
 
 import requests
 
@@ -167,7 +175,7 @@ def list_deployments(sub, rg, account):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Deploy fine-tuned models on Azure AI Foundry")
+    parser = HelpOnErrorParser(description="Deploy fine-tuned models on Azure AI Foundry")
     parser.add_argument("--sub", default=DEFAULT_SUB, help="Azure subscription ID")
     parser.add_argument("--rg", default=DEFAULT_RG, help="Resource group")
     parser.add_argument("--account", default=DEFAULT_ACCOUNT, help="Cognitive Services account")

@@ -1,10 +1,10 @@
 """
 common.py — Shared Azure AI Foundry authentication and client setup.
 
-Adapted from foundry-ft agent's common.py, with our enhancements:
-- Supports /v1/ project endpoint (preferred) and Azure endpoint (fallback)
-- REST API fallback for OSS models
-- No .env dependency — works with az CLI tokens directly
+Supports three connection methods in order of preference:
+1. /v1/ project endpoint (simplest, preferred)
+2. Foundry SDK with DefaultAzureCredential (no API key needed, cloud-native)
+3. Azure OpenAI endpoint (classic)
 
 Usage:
     from common import get_clients, upload_file
@@ -13,15 +13,28 @@ Usage:
     clients = get_clients(base_url="https://<resource>.services.ai.azure.com/api/projects/<project>/openai/v1/",
                           api_key="KEY")
 
-    # Method 2: Foundry SDK
+    # Method 2: Foundry SDK (DefaultAzureCredential — no API key needed)
     clients = get_clients(project_endpoint="https://<resource>.services.ai.azure.com/api/projects/<project>")
 
     # Method 3: Azure OpenAI endpoint
     clients = get_clients(azure_endpoint="https://<resource>.openai.azure.com",
                           api_key="KEY")
 """
+import argparse
 import os
 import sys
+
+
+class HelpOnErrorParser(argparse.ArgumentParser):
+    """ArgumentParser that prints full help when arguments are invalid.
+    
+    Standard ArgumentParser only prints a one-line usage summary on error,
+    which isn't helpful for first-time users. This prints the full --help.
+    """
+
+    def error(self, message):
+        self.print_help(sys.stderr)
+        self.exit(2, f"\nerror: {message}\n")
 
 
 def get_clients(base_url=None, azure_endpoint=None, project_endpoint=None, api_key=None):
@@ -40,9 +53,22 @@ def get_clients(base_url=None, azure_endpoint=None, project_endpoint=None, api_k
 
     if base_url:
         import openai
-        client = openai.OpenAI(base_url=base_url, api_key=api_key)
-        print(f"✅ Connected via /v1/ project endpoint")
-        return client, "project-v1"
+        # If no API key, try DefaultAzureCredential for token-based auth
+        if not api_key:
+            try:
+                from azure.identity import DefaultAzureCredential
+                credential = DefaultAzureCredential()
+                token = credential.get_token("https://cognitiveservices.azure.com/.default")
+                client = openai.OpenAI(base_url=base_url, api_key=token.token)
+                print(f"✅ Connected via /v1/ project endpoint (DefaultAzureCredential)")
+                return client, "project-v1-aad"
+            except Exception as e:
+                print(f"⚠️ No API key and DefaultAzureCredential failed: {e}")
+                # Fall through to Method 2/3
+        else:
+            client = openai.OpenAI(base_url=base_url, api_key=api_key)
+            print(f"✅ Connected via /v1/ project endpoint")
+            return client, "project-v1"
 
     # Method 2: Foundry SDK
     project_endpoint = project_endpoint or os.environ.get("AZURE_AI_PROJECT_ENDPOINT")
