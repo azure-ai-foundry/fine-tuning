@@ -25,6 +25,7 @@ $ARGUMENTS
 
 Read the workflow file that matches the user's current stage:
 
+- **First time / just want to get started** → `workflows/quickstart.md`
 - **Starting from scratch** → `workflows/full-pipeline.md`
 - **Need a dataset** → `workflows/dataset-creation.md`
 - **Training and iterating** → `workflows/iterative-training.md`
@@ -60,10 +61,13 @@ Reusable Python scripts in `scripts/`. Each is self-contained with inline docume
 
 | Script | Purpose |
 |--------|---------|
-| `submit_training.py` | Submit SFT or RFT jobs (SDK + REST fallback) |
+| `submit_training.py` | Submit SFT, DPO, or RFT jobs (SDK + REST fallback) |
+| `monitor_training.py` | Poll a running job until completion, streaming events in real time |
+| `calibrate_grader.py` | Run base model through your RFT grader to find optimal pass_threshold |
 | `generate_distillation_data.py` | Generate training data from a teacher model for distillation |
 | `check_training.py` | Pull training curves, detect overfitting, list checkpoints |
 | `deploy_model.py` | Deploy fine-tuned models via ARM REST API |
+| `cleanup.py` | List and delete old deployments, files, and pending jobs to reclaim quota |
 | `evaluate_model.py` | Run held-out eval with 2-dimension LLM judge |
 | `convert_dataset.py` | Convert between SFT, DPO, and RFT JSONL formats |
 | `score_dataset.py` | LLM-judge quality scoring on training data |

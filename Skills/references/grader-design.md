@@ -138,7 +138,12 @@ for threshold in [0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95]:
     print(f"  @{threshold}: pass={pass_rate:.0%}, fail={fail_rate:.0%}")
 ```
 
-4. Choose the threshold where **30-50% of base model rollouts fail**
+4. Choose the threshold where **25-50% of base model rollouts fail**
+
+Use `scripts/calibrate_grader.py` to automate this workflow:
+```bash
+python calibrate_grader.py --model o4-mini --data train.jsonl --grader grader.py --n 30
+```
 
 | Failure Rate | Signal Quality |
 |-------------|----------------|

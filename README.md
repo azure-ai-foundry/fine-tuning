@@ -20,6 +20,10 @@ This repository contains **12 end-to-end demos** and **sample datasets** for fin
 1. **[SFT_CNN_DailyMail](Demos/SFT_CNN_DailyMail/)** - Best first demo! Learn Supervised Fine-Tuning with news summarization
 2. **[Sample_Datasets](Sample_Datasets/)** - Understand data formats for SFT, DPO, and RFT
 
+**Want an AI coding assistant to guide you?**
+- Open this repo in VS Code with Copilot, or use Claude/Codex — the agent skill auto-discovers and walks you through the full workflow
+- Or follow **[Skills/workflows/quickstart.md](Skills/workflows/quickstart.md)** — fine-tune your first model in 6 steps (no demo notebook needed)
+
 **Ready for advanced techniques?**
 - **[DPO_Intel_Orca](Demos/DPO_Intel_Orca/)** - Direct Preference Optimization
 - **[RFT_Countdown](Demos/RFT_Countdown/)** - Reinforcement Fine-Tuning
@@ -79,9 +83,9 @@ This repo includes a fine-tuning skill that coding agents can auto-discover and 
 
 All three paths are symlinks to the canonical skill at **[Skills/](Skills/)**, which includes:
 - **SKILL.md** — Agent instructions covering SFT, DPO, and RFT workflows
-- **8 scripts** — submit, monitor, deploy, evaluate, validate, score, convert, distill
-- **11 reference docs** — hyperparameters, dataset formats, agentic RFT, cost management, and more
-- **5 guided workflows** — full pipeline, dataset creation, iterative training, diagnosis
+- **12 scripts** — submit, monitor, calibrate, check, deploy, evaluate, validate, score, convert, generate, cleanup, and shared utilities
+- **14 reference docs** — grader design, hyperparameters, dataset formats, agentic RFT, cost management, and more
+- **6 guided workflows** — quickstart, full pipeline, dataset creation, iterative training, diagnosis, experiment review
 - **Sample data** — SFT, DPO, and RFT example JSONL files
 
 ### Using with GitHub Copilot (VS Code)
