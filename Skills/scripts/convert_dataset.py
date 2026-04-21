@@ -1,3 +1,8 @@
+# /// script
+# dependencies = [
+#   "openai>=1.0",
+# ]
+# ///
 """
 convert_dataset.py — Convert between SFT, DPO, and RFT dataset formats.
 

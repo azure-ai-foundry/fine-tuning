@@ -1,3 +1,10 @@
+# /// script
+# dependencies = [
+#   "openai>=1.0",
+#   "azure-identity",
+#   "azure-ai-projects",
+# ]
+# ///
 """
 submit_training.py — Submit SFT, DPO, or RFT training jobs on Azure AI Foundry.
 

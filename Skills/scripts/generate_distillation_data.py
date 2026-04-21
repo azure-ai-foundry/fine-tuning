@@ -1,3 +1,9 @@
+# /// script
+# dependencies = [
+#   "openai>=1.0",
+#   "azure-identity",
+# ]
+# ///
 """
 generate_distillation_data.py — Generate training data from a teacher model for distillation.
 

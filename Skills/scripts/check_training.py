@@ -1,3 +1,10 @@
+# /// script
+# dependencies = [
+#   "openai>=1.0",
+#   "azure-identity",
+#   "azure-ai-projects",
+# ]
+# ///
 """
 check_training.py — Analyze training curves, detect overfitting, list checkpoints.
 

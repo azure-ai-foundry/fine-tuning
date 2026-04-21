@@ -1,3 +1,9 @@
+# /// script
+# dependencies = [
+#   "openai>=1.0",
+#   "azure-identity",
+# ]
+# ///
 """
 evaluate_model.py — Custom 2-dimension LLM judge evaluator for fine-tuned models.
 

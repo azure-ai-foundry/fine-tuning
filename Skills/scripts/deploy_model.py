@@ -1,3 +1,9 @@
+# /// script
+# dependencies = [
+#   "openai>=1.0",
+#   "azure-identity",
+# ]
+# ///
 """
 deploy_model.py — Deploy fine-tuned models on Azure AI Foundry via ARM REST API.
 
