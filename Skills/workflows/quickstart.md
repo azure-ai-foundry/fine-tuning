@@ -1,8 +1,8 @@
 # Quickstart: Fine-Tune Your First Model
 
-Go from zero to a fine-tuned model in 5 steps. This guide covers the simplest path — SFT (supervised fine-tuning) with an existing dataset.
+Go from zero to a fine-tuned model in 6 steps. This guide covers the simplest path — SFT (supervised fine-tuning) using synthetic data generated from a prompt.
 
-> **Time estimate**: ~15 minutes of active work + 1-3 hours of training time.
+> **Time estimate**: ~20 minutes of active work + 1-3 hours of training time.
 
 ## Prerequisites
 
@@ -14,7 +14,7 @@ Go from zero to a fine-tuned model in 5 steps. This guide covers the simplest pa
 pip install openai
 ```
 
-## Step 1: Prepare your credentials
+## Step 1: Connect to your project
 
 Set environment variables or create a `.env` file:
 
@@ -33,33 +33,95 @@ resp = client.chat.completions.create(model="gpt-4.1-mini", messages=[{"role": "
 print(resp.choices[0].message.content)  # Should print a greeting
 ```
 
-## Step 2: Prepare training data
+## Step 2: Generate training data
 
-Create a JSONL file where each line is a conversation. At minimum you need 10 examples, but 200-500 is recommended.
-
-**`train.jsonl`** (one JSON object per line):
-```json
-{"messages": [{"role": "system", "content": "You are a helpful customer service agent."}, {"role": "user", "content": "How do I reset my password?"}, {"role": "assistant", "content": "Go to Settings > Security > Reset Password. You'll receive an email with a reset link within 5 minutes."}]}
-{"messages": [{"role": "system", "content": "You are a helpful customer service agent."}, {"role": "user", "content": "What's your return policy?"}, {"role": "assistant", "content": "You can return any item within 30 days of purchase for a full refund, provided it's in original condition."}]}
-```
-
-Create a smaller **`val.jsonl`** with 10-20% of your examples for validation (different examples than training).
-
-> **Tip**: See `examples/sample-data/sft_sample.jsonl` for a complete format reference.
-
-Validate your data before uploading:
-```bash
-python scripts/validate/validate_sft.py train.jsonl
-python scripts/validate/data_stats.py train.jsonl
-```
-
-## Step 3: Upload data and submit the job
+The fastest way to get started is to generate synthetic data from a prompt. Define your task and have the model create examples:
 
 ```python
-from openai import OpenAI
-import os, time
+import json
 
 client = OpenAI(base_url=os.environ["OPENAI_BASE_URL"], api_key=os.environ["AZURE_OPENAI_API_KEY"])
+
+SYSTEM_PROMPT = "You are a concise technical support agent. Answer in 1-2 sentences."
+
+# Describe the kind of examples you want
+generation_prompt = """Generate 50 diverse technical support conversations. 
+Each should have a customer question and an ideal agent response.
+The responses should be concise (1-2 sentences), accurate, and professional.
+Cover topics like: password resets, billing issues, product setup, 
+account changes, shipping status, and troubleshooting.
+
+Return a JSON array where each element has "question" and "answer" fields."""
+
+resp = client.chat.completions.create(
+    model="gpt-4.1-mini",  # use your deployed model
+    messages=[{"role": "user", "content": generation_prompt}],
+    max_tokens=8000,
+    temperature=1.0,
+)
+
+# Parse and convert to training format
+examples = json.loads(resp.choices[0].message.content.strip().strip("`").replace("json\n", ""))
+
+with open("train.jsonl", "w") as f:
+    for ex in examples[:40]:  # 40 for training
+        f.write(json.dumps({"messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": ex["question"]},
+            {"role": "assistant", "content": ex["answer"]},
+        ]}) + "\n")
+
+with open("val.jsonl", "w") as f:
+    for ex in examples[40:]:  # 10 for validation
+        f.write(json.dumps({"messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": ex["question"]},
+            {"role": "assistant", "content": ex["answer"]},
+        ]}) + "\n")
+
+print(f"Created train.jsonl ({40} examples) and val.jsonl ({len(examples)-40} examples)")
+```
+
+> **Tip**: For better results, generate more examples (200-500) across multiple prompts. See `workflows/dataset-creation.md` for advanced approaches.
+
+Validate your data:
+```bash
+python scripts/validate/validate_sft.py train.jsonl
+```
+
+## Step 3: Baseline the base model
+
+Before fine-tuning, see how the base model handles your task. This is your benchmark.
+
+```python
+# Test a few examples from your validation set
+with open("val.jsonl") as f:
+    test_examples = [json.loads(line) for line in f][:5]
+
+print("Base model responses:\n")
+for ex in test_examples:
+    question = ex["messages"][1]["content"]
+    expected = ex["messages"][2]["content"]
+    
+    resp = client.chat.completions.create(
+        model="gpt-4.1-mini",
+        messages=ex["messages"][:2],  # system + user only
+        max_tokens=200,
+    )
+    actual = resp.choices[0].message.content
+    
+    print(f"Q: {question}")
+    print(f"Expected: {expected}")
+    print(f"Base model: {actual}")
+    print()
+```
+
+Look for patterns: Is the base model too verbose? Wrong format? Missing domain knowledge? These are what fine-tuning will fix.
+
+## Step 4: Upload data and submit the job
+
+```python
+import time
 
 # Upload files
 with open("train.jsonl", "rb") as f:
@@ -93,7 +155,7 @@ Or use the script:
 python scripts/submit_training.py --model gpt-4.1-mini --training-file train.jsonl --validation-file val.jsonl --type sft --suffix my-first-ft --epochs 2
 ```
 
-## Step 4: Monitor and wait
+## Step 5: Monitor and wait
 
 ```bash
 python scripts/monitor_training.py --job-id <your-job-id>
@@ -103,7 +165,7 @@ Or check in the [Azure AI Foundry portal](https://ai.azure.com) under Fine-tunin
 
 Training typically takes 1-3 hours depending on dataset size and model.
 
-## Step 5: Deploy and test
+## Step 6: Deploy, test, and compare
 
 Once the job succeeds, deploy the fine-tuned model:
 
@@ -111,21 +173,30 @@ Once the job succeeds, deploy the fine-tuned model:
 python scripts/deploy_model.py --model-id <fine-tuned-model-name> --name my-ft-deployment --capacity 50
 ```
 
-Then test it:
+Then compare base vs fine-tuned on the same questions:
+
 ```python
-resp = client.chat.completions.create(
-    model="my-ft-deployment",  # your deployment name
-    messages=[
-        {"role": "system", "content": "You are a helpful customer service agent."},
-        {"role": "user", "content": "How do I track my order?"},
-    ],
-)
-print(resp.choices[0].message.content)
+for ex in test_examples:
+    question = ex["messages"][1]["content"]
+    
+    # Base model
+    base_resp = client.chat.completions.create(
+        model="gpt-4.1-mini", messages=ex["messages"][:2], max_tokens=200)
+    
+    # Fine-tuned model
+    ft_resp = client.chat.completions.create(
+        model="my-ft-deployment", messages=ex["messages"][:2], max_tokens=200)
+    
+    print(f"Q: {question}")
+    print(f"Base:      {base_resp.choices[0].message.content}")
+    print(f"Fine-tuned: {ft_resp.choices[0].message.content}")
+    print()
 ```
 
 ## What's next?
 
-- **Evaluate properly**: Use `scripts/evaluate_model.py` to compare your fine-tuned model against the base model on a held-out test set
+- **Evaluate rigorously**: Use `scripts/evaluate_model.py` to score both models with an LLM judge on a held-out test set
+- **Scale your data**: Generate 200-500 examples for better results — see `workflows/dataset-creation.md`
 - **Try RFT**: For tasks with verifiable answers, reinforcement fine-tuning can push accuracy further — see `references/training-types.md`
-- **Iterate**: If results aren't good enough, see `workflows/diagnose-poor-results.md` and `workflows/iterative-training.md`
-- **Full guide**: For the complete workflow including data generation, quality scoring, and training curve analysis, see `workflows/full-pipeline.md`
+- **Iterate**: If results aren't good enough, see `workflows/diagnose-poor-results.md`
+- **Full guide**: For the complete workflow, see `workflows/full-pipeline.md`
