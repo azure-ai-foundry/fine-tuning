@@ -200,8 +200,8 @@ For RFT, checkpoint selection works differently than SFT:
 checkpoints = client.fine_tuning.jobs.checkpoints.list(job_id)
 for cp in checkpoints:
     m = cp.metrics
-    print(f"Step {cp.step_number}: "
-          f"train_reward={m.train_mean_reward:.3f}, "
-          f"valid_reward={m.full_valid_mean_reward:.3f}, "
-          f"tokens={m.completion_tokens_mean:.0f}")
+    tr = f"{m.train_mean_reward:.3f}" if m.train_mean_reward is not None else "n/a"
+    vr = f"{m.full_valid_mean_reward:.3f}" if m.full_valid_mean_reward is not None else "n/a"
+    ct = f"{m.completion_tokens_mean:.0f}" if m.completion_tokens_mean is not None else "n/a"
+    print(f"Step {cp.step_number}: train_reward={tr}, valid_reward={vr}, tokens={ct}")
 ```
