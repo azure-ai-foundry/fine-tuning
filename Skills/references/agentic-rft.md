@@ -86,6 +86,8 @@ RFT jobs with tools generate additional training metrics (visible in the Foundry
 | Retry on 5xx | 3 attempts, then rollout discarded |
 | On 4xx | Error serialized and shown to model |
 
+**Infrastructure recommendations**: Use Always On (prevent cold starts), sufficient compute tier (S2 or equivalent), and multiple instances. Under-provisioned tool endpoints can cause training jobs to slow down or hang during post-training evaluation. Test your endpoint under parallel load before submitting a training job.
+
 ## Endpoint Graders
 
 Instead of Python or score_model graders, you can host your own grading logic as a REST endpoint. This gives maximum flexibility for complex or domain-specific evaluation.
@@ -138,21 +140,25 @@ Return a JSON score:
 | Timeout | 10 minutes |
 | Retry on failure | 3 attempts, then rollout discarded |
 
+**Important**: Endpoint graders are called during both training and post-training validation. If the endpoint is slow or unavailable during post-training eval, the job can hang indefinitely with no error message. Ensure the endpoint is appropriately scaled, uses Always On, and can handle sustained load. See `references/grader-design.md` for grader type selection guidance.
+
 ## RFT Hyperparameters
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
+| Parameter | Description | Recommended Starting Point |
+|-----------|-------------|---------------------------|
 | `reasoning_effort` | `"low"`, `"medium"`, `"high"` — controls depth of reasoning | `"medium"` |
-| `compute_multiplier` | Scales training compute (higher = more expensive, faster convergence) | `1.0` |
-| `eval_interval` | Evaluate every N training steps | Varies |
-| `eval_samples` | Number of validation examples per eval | Varies |
-| `max_episode_steps` | Max tool calls + reasoning steps per rollout | `10` |
+| `compute_multiplier` | Scales training compute (more rollouts per step) | `1.5` |
+| `learning_rate_multiplier` | Scales the learning rate | `1.0` (higher values increase output verbosity without improving accuracy) |
+| `n_epochs` | Number of passes through training data | `2–3` |
+| `eval_interval` | Evaluate every N training steps | `5` |
+| `eval_samples` | Number of validation examples per eval | `10` |
+| `max_episode_steps` | Max tool calls + reasoning steps per rollout | `5–10` |
 
-### Cost Control with RFT Hyperparameters
+### Hyperparameter Notes
 
-- Start with `reasoning_effort: "low"` and small `eval_samples` to estimate costs
-- Increase `compute_multiplier` only if convergence is too slow
-- Lower `eval_interval` means more frequent validation (more grader cost but better monitoring)
+- **Learning rate**: LR=1.0 and LR=2.0 produce similar final accuracy with sufficient data. However, higher LR tends to increase output verbosity (completion token growth). Default to 1.0.
+- **Compute multiplier**: Higher values generate more rollouts per step, giving better gradient estimates at the cost of longer training time. 1.5 is a good balance.
+- **Epochs**: The platform may early-stop before completing all epochs if convergence is detected.
 
 ## When to Use Agentic RFT
 

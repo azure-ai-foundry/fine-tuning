@@ -6,6 +6,7 @@
 2. **Use a held-out test set**: Never evaluate on training or validation data. The model has seen those.
 3. **Use the same test set for every model**: This is the only way to compare results fairly.
 4. **Use task-specific graders**: Built-in generic evaluators (Coherence, Fluency) measure general quality and won't detect fine-tuning improvements. Use custom graders (Python, score model, string check) for task-specific evaluation.
+5. **Measure cost alongside accuracy**: Report completion tokens per response when comparing models or checkpoints. A model that achieves the same accuracy with fewer tokens is strictly better — cheaper inference and lower latency. This is especially important for RFT, where models often learn to generate longer responses during training.
 
 ## Azure AI Evaluation SDK
 

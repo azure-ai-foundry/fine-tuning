@@ -1,12 +1,43 @@
 # Dataset Creation Workflow
 
-> **Two paths to training data:**
+> **Three paths to training data:**
 > 1. **Manual** — Prepare your own JSONL file following the formats in `references/dataset-formats.md`
 > 2. **Synthetic generation** — Use NVIDIA Data Designer (below) to generate training data from an LLM
+> 3. **Manual + LLM augmentation** — Write a small set of examples by hand, then use an LLM to generate diverse rephrasings
 >
 > If you already have data, skip to validation: `python scripts/validate/validate_sft.py your_data.jsonl`
 
-Two approaches for generating synthetic training data. Choose based on your needs.
+Three approaches for generating training data. Choose based on your needs.
+
+## Approach 0: Manual + LLM Augmentation (Fast Start for RFT)
+
+If you have a small manually curated dataset, you can use an LLM to expand it through **rephrasing** — generating diverse variations of each example while keeping the same expected answer.
+
+This is especially useful for RFT, where training data is just prompts + expected answers (no model responses needed).
+
+### When to use
+- You have a well-defined task with clear correct answers
+- You can write quality examples by hand but need more volume
+- Diversity of phrasing matters more than diversity of scenarios
+
+### Workflow
+1. Write base examples by hand — each with the correct expected answer
+2. For each example, use an LLM to generate rephrasings that vary tone, detail level, and wording
+3. Each rephrasing gets the same `expected_answer` / `expected_resolution` — only the customer phrasing changes
+4. Validate the augmented dataset
+
+### Example prompt for rephrasing
+```
+Generate N different phrasings of this request. Each should:
+- Use different wording, tone, or level of detail
+- Include the same key identifiers (order IDs, item names)
+- Vary between formal, casual, frustrated, brief, and detailed styles
+Return a JSON array of N strings.
+
+Original: [your example]
+```
+
+A cheap model (gpt-4.1-mini or equivalent) works well for rephrasing since no new ground truth is needed — you're just diversifying how the same question is asked.
 
 ## Approach 1: NVIDIA Data Designer (Recommended for Production)
 
