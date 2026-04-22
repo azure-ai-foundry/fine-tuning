@@ -23,6 +23,7 @@ We offer three training techniques to optimize your models:
          - [Vision Fine Tuning](./Supervised_Fine_Tuning/Multimodal-chartqa/) - Fine Tuning for Chart Interpretation
         - [Text Fine Tuning](./Supervised_Fine_Tuning/Text-GSM8K/) - Grade School Math dataset
         - [Fine Tuning with Function Calls](./Supervised_Fine_Tuning/Tool-Calling) - Stock market tool calling example
+        - [NL-to-Python Distillation](./Supervised_Fine_Tuning/Text-NL-to-Python/) - Synthetic code generation data via NVIDIA Data Designer
 
 - **Direct Preference Optimization (DPO):** Trains models to prefer certain types of responses over others by learning from comparative feedback, without requiring a separate reward model.
     - *Best for:* Improving response quality, safety, and alignment with human preferences.
