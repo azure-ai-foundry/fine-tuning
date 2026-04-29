@@ -1,6 +1,6 @@
 # Fine-Tuning in AI Foundry
 
-This repository contains **12 end-to-end demos** and **sample datasets** for fine-tuning models on [Azure AI Foundry](http://ai.azure.com/). Use this repo to explore practical fine-tuning workflows and access ready-to-use data for your own projects.
+This repository contains **13 end-to-end demos** and **sample datasets** for fine-tuning models on [Azure AI Foundry](http://ai.azure.com/). Use this repo to explore practical fine-tuning workflows and access ready-to-use data for your own projects.
 
 ## 📋 Table of Contents
 
@@ -17,7 +17,7 @@ This repository contains **12 end-to-end demos** and **sample datasets** for fin
 
 **New to fine-tuning?** Start here:
 
-1. **[SFT_CNN_DailyMail](Demos/SFT_CNN_DailyMail/)** - Best first demo! Learn Supervised Fine-Tuning with news summarization
+1. **[SFT_Bug_Detection](Demos/SFT_Bug_Detection/)** - Best first demo! Fine-tune GPT-4.1-mini to detect code bugs — beat GPT-5.4 quality at 9x lower cost
 2. **[Sample_Datasets](Sample_Datasets/)** - Understand data formats for SFT, DPO, and RFT
 
 **Want an AI coding assistant to guide you?**
@@ -36,6 +36,7 @@ Explore end-to-end fine-tuning experiences in the **[Demos](Demos/)** folder:
 
 | Demo | Technique | Use Case | Difficulty |
 |------|-----------|----------|------------|
+| [SFT_Bug_Detection](Demos/SFT_Bug_Detection/) | SFT | Code bug detection (beats GPT-5.4 teacher) | ⭐ Beginner |
 | [SFT_CNN_DailyMail](Demos/SFT_CNN_DailyMail/) | SFT | News summarization | ⭐ Beginner |
 | [SFT_PubMed_Summarization](Demos/SFT_PubMed_Summarization/) | SFT | Medical paper summarization | ⭐ Beginner |
 | [DPO_Intel_Orca](Demos/DPO_Intel_Orca/) | DPO | Preference optimization | ⭐⭐ Intermediate |
@@ -59,6 +60,7 @@ Ready-to-use datasets for testing fine-tuning techniques in the **[Sample_Datase
 | Technique | Dataset | Description |
 |-----------|---------|-------------|
 | **SFT** | [Text-GSM8K](Sample_Datasets/Supervised_Fine_Tuning/Text-GSM8K/) | Grade school math problems |
+| **SFT** | [Text-Bug-Detection](Sample_Datasets/Supervised_Fine_Tuning/Text-Bug-Detection/) | Code bug detection and fix suggestions |
 | **SFT** | [Multimodal-chartqa](Sample_Datasets/Supervised_Fine_Tuning/Multimodal-chartqa/) | Chart interpretation |
 | **SFT** | [Tool-Calling](Sample_Datasets/Supervised_Fine_Tuning/Tool-Calling/) | Function calling patterns |
 | **DPO** | [orca_dpo_pairs](Sample_Datasets/Direct_Preference_Optimization/orca_dpo_pairs/) | Preference alignment |
