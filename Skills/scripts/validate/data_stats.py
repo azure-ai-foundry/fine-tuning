@@ -5,8 +5,45 @@ Adapted from foundry-ft agent. Auto-detects SFT/DPO/RFT format and reports
 token estimates, role distribution, and rough cost estimates.
 """
 import json
+import os
 import sys
 from collections import Counter
+
+# Fix Windows console encoding (cp1252 can't handle Unicode arrows/emoji)
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+# Reuse the centralized SFT pricing table from common.py so cost estimates
+# stay consistent across data_stats.py, auto_finetune.py, etc.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from common import (
+        SFT_TRAINING_PRICE_PER_M_TOKENS,
+        SFT_TIER_MULTIPLIER,
+        AZURE_PRICING_URL,
+    )
+except ImportError:
+    # Fallback — keep estimates working even if common.py isn't importable
+    # (e.g. when this script is copied standalone). Values match common.py.
+    SFT_TRAINING_PRICE_PER_M_TOKENS = {
+        "gpt-4.1-nano":   1.50,
+        "gpt-4.1-mini":   5.00,
+        "gpt-4.1":       25.00,
+        "gpt-4o-mini":    3.00,
+        "gpt-4o":        25.00,
+        "ministral-3b":   1.00,
+        "qwen3-32b":      3.20,
+        "llama-3.3-70b":  4.50,
+        "gpt-oss-20b":    3.60,
+    }
+    SFT_TIER_MULTIPLIER = {"globalstandard": 1.00, "developertier": 0.50, "standard": 1.20}
+    AZURE_PRICING_URL = (
+        "https://azure.microsoft.com/pricing/details/cognitive-services/openai-service"
+    )
 
 
 def estimate_tokens(text: str) -> int:
@@ -129,18 +166,38 @@ def data_stats(filepath: str) -> None:
         print(f"Unique grader values: {unique}/{len(grader_values)}")
         print(f"Avg grader value length: {avg_val_len:.0f} chars")
 
-    # Cost estimates per model family
-    print(f"\n💰 Cost Estimates (1 epoch):")
-    cost_table = {
-        "gpt-4.1-nano":  3.0,
-        "gpt-4.1-mini":  12.0,
-        "gpt-4.1":       25.0,
-        "Ministral-3B":  8.0,
-        "gpt-oss-20b":   15.0,
-    }
-    for model, cost_per_1m in cost_table.items():
-        est_cost = (total_tokens / 1_000_000) * cost_per_1m
-        print(f"  {model:20s}: ~${est_cost:.2f}/epoch  (~${est_cost * 2:.2f} for 2 epochs)")
+    # Cost estimates per model family (per epoch, globalStandard tier baseline).
+    # See Skills/references/cost-management.md and common.py for the source table.
+    print(f"\n💰 Cost Estimates per Epoch (globalStandard tier baseline):")
+    # Display in a stable, human-friendly order
+    display_order = [
+        "gpt-4.1-nano", "gpt-4.1-mini", "gpt-4.1",
+        "gpt-4o-mini", "gpt-4o",
+        "ministral-3b", "qwen3-32b", "llama-3.3-70b", "gpt-oss-20b",
+    ]
+    # OSS models only support globalStandard — skip the developerTier column for them.
+    oss_models = {"ministral-3b", "qwen3-32b", "llama-3.3-70b", "gpt-oss-20b"}
+    for model in display_order:
+        cost_per_1m = SFT_TRAINING_PRICE_PER_M_TOKENS.get(model)
+        if cost_per_1m is None:
+            continue
+        per_epoch = (total_tokens / 1_000_000) * cost_per_1m
+        if model in oss_models:
+            # OSS: globalStandard only (no dev tier discount available)
+            print(
+                f"  {model:<14s}: ~${per_epoch:>7.2f}/epoch  "
+                f"(2 epochs ~${per_epoch * 2:>7.2f}; globalStandard only)"
+            )
+        else:
+            dev_tier_mult = SFT_TIER_MULTIPLIER.get("developertier", 0.5)
+            dev_tier_per_epoch = per_epoch * dev_tier_mult
+            print(
+                f"  {model:<14s}: ~${per_epoch:>7.2f}/epoch  "
+                f"(2 epochs ~${per_epoch * 2:>7.2f}; "
+                f"developerTier 2 epochs ~${dev_tier_per_epoch * 2:>7.2f})"
+            )
+    print(f"  ⚠️  Estimates are illustrative — verify on the Azure pricing page:")
+    print(f"      {AZURE_PRICING_URL}")
 
     # Dataset size guidance
     print(f"\n📊 Dataset size guidance:")

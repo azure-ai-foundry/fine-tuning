@@ -25,6 +25,7 @@ $ARGUMENTS
 
 Read the workflow file that matches the user's current stage:
 
+- **"Just do it for me" / autonomous fine-tuning (experimental)** → `workflows/auto-finetune.md`
 - **First time / just want to get started** → `workflows/quickstart.md`
 - **Starting from scratch** → `workflows/full-pipeline.md`
 - **Need a dataset** → `workflows/dataset-creation.md`
@@ -32,7 +33,7 @@ Read the workflow file that matches the user's current stage:
 - **Results are bad** → `workflows/diagnose-poor-results.md`
 - **Reviewing results & planning next run** → `workflows/experiment-review.md`
 
-If the stage isn't clear, start with `workflows/full-pipeline.md`.
+If the user wants full control, start with `workflows/full-pipeline.md`. If they want automation, try `workflows/auto-finetune.md` (experimental).
 
 # References
 
@@ -62,6 +63,7 @@ Reusable Python scripts in `scripts/`. Each is self-contained with inline docume
 
 | Script | Purpose |
 |--------|---------|
+| `auto_finetune.py` | **Autonomous orchestrator (experimental, SFT only)** — runs the full loop: analyze → generate → prepare → baseline → train → evaluate → review → iterate. Good for exploration; use individual scripts for production workflows or RFT. |
 | `submit_training.py` | Submit SFT, DPO, or RFT jobs (SDK + REST fallback) |
 | `monitor_training.py` | Poll a running job until completion, streaming events in real time |
 | `calibrate_grader.py` | Run base model through your RFT grader to find optimal pass_threshold |
@@ -83,6 +85,31 @@ Reusable Python scripts in `scripts/`. Each is self-contained with inline docume
 **Sample data**: `examples/sample-data/` contains `sft_sample.jsonl`, `dpo_sample.jsonl`, and `rft_sample.jsonl` — use these as format references.
 
 **CLI alternative**: For quick single-job workflows, the `azd ai finetuning` CLI can replace `submit_training.py` and `deploy_model.py`. See `references/foundry-cli.md`.
+
+# Quick Reference
+
+| Task | Command |
+|------|---------|
+| Validate SFT data | `python scripts/validate/validate_sft.py data.jsonl` |
+| Submit SFT job | `python scripts/submit_training.py --model gpt-4.1-mini --training-file train.jsonl --validation-file val.jsonl --type sft` |
+| Monitor job | `python scripts/monitor_training.py --job-id ftjob-xxx` |
+| Analyze curves | `python scripts/check_training.py --job-id ftjob-xxx` |
+| Deploy model | `python scripts/deploy_model.py --model-id ft:gpt-4.1-mini:... --name my-eval` |
+| Evaluate model | `python scripts/evaluate_model.py --deployment-name my-eval --test-file test.jsonl` |
+| Auto fine-tune | `python scripts/auto_finetune.py auto --data data.jsonl --description "task" --model gpt-4.1-mini` |
+| Auto (prompt only) | `python scripts/auto_finetune.py auto --description "task" --model gpt-4.1-nano` |
+
+# Common Errors
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| "API version not supported" | Older `openai` SDK on `/v1/` endpoint | Upgrade to `openai>=1.0` |
+| "does not support fine-tuning with Standard TrainingType" | OSS model needs `globalStandard` | Use `--use-rest` flag or set `trainingType: "globalStandard"` |
+| Job stuck in post-training eval | Under-provisioned tool endpoint (RFT) | Scale to S2+, enable Always On |
+| "DeploymentNotReady" / 500 on deploy | Too many deployments or ARM race condition | Clean old eval deployments, retry after 5 min |
+| Content safety block at deployment | PII-dense training data | Remove problematic document types |
+| "BadRequestForDependentService" | Deployment still warming up | Wait 5+ minutes after deployment creation |
+| Queue stuck ("jobs ahead") | Standard tier capacity exhausted | Cancel and resubmit on `developerTier` or `globalStandard` |
 
 # Rules
 

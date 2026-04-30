@@ -12,13 +12,11 @@ Supports all model families with correct format/SKU mapping.
 
 Usage:
   python deploy_model.py --model-id "ft:gpt-4.1-mini-2025-04-14:..." --name "my-ft-eval" --capacity 100
-  python deploy_model.py --model-id "ft:gpt-oss-20b-11:..." --name "oss-eval" --format Microsoft --sku GlobalStandard
+  python deploy_model.py --model-id "ft:gpt-oss-20b:..." --name "oss-eval" --format Microsoft --sku GlobalStandard
   python deploy_model.py --delete --name "my-ft-eval"
   python deploy_model.py --list
 """
 
-import argparse
-import json
 import os
 import subprocess
 import sys
@@ -27,6 +25,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import HelpOnErrorParser
 
 import requests
+
+
+def _safe_error_msg(resp):
+    """Extract error message from response, handling non-JSON bodies (HTML 502/503)."""
+    try:
+        return resp.json().get("error", {}).get("message", resp.text[:200])
+    except (ValueError, KeyError):
+        return resp.text[:200] if resp.text else "Unknown error"
 
 # Default Azure resource coordinates — override with env vars or args
 DEFAULT_SUB = os.environ.get("AZURE_SUBSCRIPTION_ID", "")
@@ -50,7 +56,7 @@ if not AZ_CLI:
 
 # Model format auto-detection rules
 FORMAT_RULES = [
-    (lambda m: "oss-20b" in m or "oss20b" in m, "Microsoft", "GlobalStandard"),
+    (lambda m: "oss-20b" in m.lower() or "oss20b" in m.lower(), "Microsoft", "GlobalStandard"),
     (lambda m: "ministral" in m.lower() or "mistral" in m.lower(), "Mistral AI", "GlobalStandard"),
     (lambda m: "llama" in m.lower() or "meta" in m.lower(), "Meta", "GlobalStandard"),
     (lambda m: "qwen" in m.lower() or "alibaba" in m.lower(), "Alibaba", "GlobalStandard"),
@@ -108,13 +114,13 @@ def create_deployment(sub, rg, account, name, model_id, model_format, sku, capac
     resp = requests.put(url, headers={
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
-    }, json=body)
+    }, json=body, timeout=(10, 120))
 
     if resp.status_code in (200, 201):
         print(f"✅ Deployment '{name}' created (format={model_format}, sku={sku}, capacity={capacity})")
         return True
     else:
-        print(f"❌ Deployment failed ({resp.status_code}): {resp.text}")
+        print(f"❌ Deployment failed ({resp.status_code}): {_safe_error_msg(resp)}")
         return False
 
 
@@ -125,9 +131,12 @@ def wait_for_deployment(sub, rg, account, name, timeout=600, poll_interval=15):
 
     while time.time() - start < timeout:
         token = get_arm_token()
-        resp = requests.get(url, headers={"Authorization": f"Bearer {token}"})
+        resp = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=(10, 60))
         if resp.status_code == 200:
-            state = resp.json().get("properties", {}).get("provisioningState", "Unknown")
+            try:
+                state = resp.json().get("properties", {}).get("provisioningState", "Unknown")
+            except (ValueError, KeyError):
+                state = "Unknown"
             print(f"  Status: {state}")
             if state == "Succeeded":
                 return True
@@ -144,23 +153,27 @@ def delete_deployment(sub, rg, account, name):
     """Delete a deployment."""
     token = get_arm_token()
     url = arm_url(sub, rg, account, name)
-    resp = requests.delete(url, headers={"Authorization": f"Bearer {token}"})
+    resp = requests.delete(url, headers={"Authorization": f"Bearer {token}"}, timeout=(10, 30))
     if resp.status_code in (200, 202, 204):
         print(f"✅ Deployment '{name}' deleted.")
     else:
-        print(f"❌ Delete failed ({resp.status_code}): {resp.text}")
+        print(f"❌ Delete failed ({resp.status_code}): {_safe_error_msg(resp)}")
 
 
 def list_deployments(sub, rg, account):
     """List all deployments."""
     token = get_arm_token()
     url = arm_url(sub, rg, account)
-    resp = requests.get(url, headers={"Authorization": f"Bearer {token}"})
+    resp = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=(10, 60))
     if resp.status_code != 200:
-        print(f"❌ Failed to list deployments ({resp.status_code}): {resp.text}")
+        print(f"❌ Failed to list deployments ({resp.status_code}): {_safe_error_msg(resp)}")
         return
 
-    deployments = resp.json().get("value", [])
+    try:
+        deployments = resp.json().get("value", [])
+    except (ValueError, KeyError):
+        print(f"❌ Failed to parse deployment list: {resp.text[:200]}")
+        return
     if not deployments:
         print("No deployments found.")
         return
@@ -211,7 +224,8 @@ def main():
         delete_deployment(args.sub, args.rg, args.account, args.name)
         return
 
-    if args.wait:
+    if args.wait and not args.model_id:
+        # Wait-only mode: poll an existing deployment
         success = wait_for_deployment(args.sub, args.rg, args.account, args.name)
         sys.exit(0 if success else 1)
 
@@ -228,10 +242,10 @@ def main():
         sku = sku or auto_sku
         print(f"Auto-detected: format={model_format}, sku={sku}")
 
-    create_deployment(args.sub, args.rg, args.account, args.name,
+    created = create_deployment(args.sub, args.rg, args.account, args.name,
                       args.model_id, model_format, sku, args.capacity)
 
-    if args.wait:
+    if args.wait and created:
         wait_for_deployment(args.sub, args.rg, args.account, args.name)
 
 

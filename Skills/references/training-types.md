@@ -10,7 +10,7 @@
 | **Effort to prepare data** | Low | High (need contrasting pairs) | Medium (need grader, not outputs) |
 | **Risk of regression** | Low | Medium | High (sensitive to grader quality) |
 | **Typical improvement** | 5–30% on task metrics | Subtle style/safety shifts | 0–15% on reasoning tasks |
-| **Supported models** | Most models | Select models | o4-mini, o3-mini |
+| **Supported models** | Most models | Select models (gpt-4.1, gpt-4o) | o4-mini, gpt-5 |
 
 ## Supervised Fine-Tuning (SFT)
 
@@ -84,12 +84,13 @@ After SFT:
 | Model | SFT | DPO | RFT | Vision FT |
 |-------|-----|-----|-----|-----------|
 | gpt-4.1 | ✅ | ✅ | ❌ | ✅ |
-| gpt-4.1-mini | ✅ | ✅ | ❌ | ❌ |
+| gpt-4.1-mini | ✅ | ❌ | ❌ | ❌ |
 | gpt-4.1-nano | ✅ | ❌ | ❌ | ❌ |
 | gpt-4o (2024-08-06) | ✅ | ✅ | ❌ | ✅ |
+| gpt-4o-mini | ✅ | ❌ | ❌ | ❌ |
 | o4-mini | ❌ | ❌ | ✅ | ❌ |
-| o3-mini | ❌ | ❌ | ✅ | ❌ |
-| gpt-oss-20b-11 | ✅ | ❌ | ❌ | ❌ |
+| gpt-5 | ❌ | ❌ | ✅ | ❌ |
+| gpt-oss-20b | ✅ | ❌ | ❌ | ❌ |
 | Ministral-3B | ✅ | ❌ | ❌ | ❌ |
 | Llama-3.3-70B | ✅ | ❌ | ❌ | ❌ |
 | Qwen-3-32B | ✅ | ❌ | ❌ | ❌ |

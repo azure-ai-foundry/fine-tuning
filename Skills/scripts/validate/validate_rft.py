@@ -2,14 +2,13 @@
 """Validate RFT (Reinforcement Fine-Tuning) JSONL files for Azure AI Foundry.
 
 Adapted from foundry-ft agent with critical additions from our platform gotchas:
-- Grader escaping warnings (\\n, \\t must be \\\\n, \\\\t in JSON strings)
+- Grader escaping warnings for newlines (\\n must be \\\\n in JSON strings)
 - Content moderation risk detection ("chain of thought" triggers RAI filter)
 - Reference answer diversity check
 """
 import argparse
 import json
 import sys
-import re
 from collections import Counter
 
 
@@ -19,7 +18,7 @@ RISKY_PHRASES = [
 ]
 
 
-def validate_rft(filepath: str, expected_field: str | None = None) -> None:
+def validate_rft(filepath, expected_field=None):
     errors = []
     warnings = []
     total = 0
@@ -29,11 +28,11 @@ def validate_rft(filepath: str, expected_field: str | None = None) -> None:
 
     with open(filepath, "r", encoding="utf-8") as f:
         for line_num, line in enumerate(f, 1):
-            total += 1
             raw_line = line
             line = line.strip()
             if not line:
                 continue
+            total += 1
 
             try:
                 record = json.loads(line)
@@ -49,6 +48,11 @@ def validate_rft(filepath: str, expected_field: str | None = None) -> None:
                     errors.append(f"Line {line_num}: 'messages' must be a non-empty array")
                 elif not any(m.get("role") == "user" for m in msgs):
                     errors.append(f"Line {line_num}: 'messages' has no 'user' message")
+                elif msgs[-1].get("role") != "user":
+                    errors.append(
+                        f"Line {line_num}: Last message must be 'user' role for RFT "
+                        f"(found '{msgs[-1].get('role')}') — unlike SFT, the model generates its own response"
+                    )
 
             # Detect extra fields (grader fields) beyond 'messages'
             extra_fields = set(record.keys()) - {"messages"}
@@ -77,15 +81,27 @@ def validate_rft(filepath: str, expected_field: str | None = None) -> None:
                         if val:
                             grader_values.append(val)
 
-                    # Check for grader escaping issues (CRITICAL platform gotcha)
+                    # Check for unescaped newlines in extra fields (CRITICAL platform gotcha)
+                    # Instead of regex-parsing the raw JSON line (which risks catastrophic
+                    # backtracking), we compare the parsed value against the raw line to
+                    # detect single-escaped \n that should be double-escaped \\n.
                     for field in extra_fields:
-                        val = str(record[field])
-                        if "\n" in val:
-                            warnings.append(
-                                f"Line {line_num}: '{field}' contains newlines — "
-                                "if this is grader source code embedded in JSON, "
-                                "ensure newlines are escaped as \\\\n."
-                            )
+                        parsed_val = str(record.get(field, ""))
+                        if "\n" in parsed_val:
+                            # The parsed value contains actual newlines — check if the raw
+                            # JSON has them properly double-escaped
+                            field_needle = f'"{field}"'
+                            if field_needle in raw_line:
+                                field_start = raw_line.index(field_needle)
+                                field_region = raw_line[field_start:field_start + 500]
+                                # Single-escaped \n in raw JSON (not \\n) means the source
+                                # code newlines aren't properly escaped for the platform
+                                if "\\n" in field_region and "\\\\n" not in field_region:
+                                    warnings.append(
+                                        f"Line {line_num}: '{field}' contains \\n sequences — "
+                                        "if this is grader source code embedded in JSON, "
+                                        "ensure newlines are escaped as \\\\n."
+                                    )
 
             # Content moderation risk
             all_text = json.dumps(record).lower()
@@ -157,8 +173,8 @@ def validate_rft(filepath: str, expected_field: str | None = None) -> None:
     if total > 0:
         print(f"\n💡 RFT tips:")
         print(f"  • Ensure your training grader matches your eval grader (alignment gotcha)")
-        print(f"  • Start with reasoning_effort='medium', pass_rate_threshold=0.5")
-        print(f"  • RFT is primarily for o-series models (o3-mini, o4-mini). Check Azure docs for the latest supported model list.")
+        print(f"  • Start with reasoning_effort='medium', pass_threshold=0.5")
+        print(f"  • RFT is primarily for o-series models (o4-mini). Check Azure docs for the latest supported model list.")
 
     if not errors:
         print(f"\n✅ Data is valid for RFT fine-tuning!")

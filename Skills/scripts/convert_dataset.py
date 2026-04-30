@@ -22,13 +22,12 @@ Usage:
   python convert_dataset.py --input dpo.jsonl --output sft.jsonl --format sft-from-dpo
 """
 
-import argparse
 import json
 import os
 import sys
 import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import HelpOnErrorParser
+from common import HelpOnErrorParser, get_clients
 
 
 def parquet_to_sft(input_path, output_path, user_col, assistant_col, system_prompt=None):
@@ -74,18 +73,13 @@ def parquet_to_sft(input_path, output_path, user_col, assistant_col, system_prom
     print(f"Converted {count} examples to SFT JSONL → {output_path}")
 
 
-def sft_to_dpo(input_path, output_path, endpoint, api_key, base_model):
+def sft_to_dpo(input_path, output_path, client, base_model):
     """Convert SFT to DPO by generating non-preferred responses from a base model.
 
     DPO format uses: input (system+user messages), preferred_output, non_preferred_output.
     """
-    import openai
-
-    client = openai.AzureOpenAI(
-        azure_endpoint=endpoint, api_key=api_key, api_version="2025-04-01-preview"
-    )
-
-    examples = [json.loads(l) for l in open(input_path)]
+    with open(input_path, encoding="utf-8") as inf:
+        examples = [json.loads(l) for l in inf]
     count = 0
 
     with open(output_path, "w", encoding="utf-8") as f:
@@ -129,34 +123,55 @@ def sft_to_dpo(input_path, output_path, endpoint, api_key, base_model):
 
 
 def sft_to_rft(input_path, output_path):
-    """Convert SFT to RFT format (passthrough — same structure, different usage)."""
+    """Convert SFT to RFT format.
+
+    Strips assistant messages (RFT last message must be user) and adds a
+    placeholder grader field. The user must populate grader reference fields
+    (e.g., expected_answer) before training.
+    """
     count = 0
+    skipped = 0
     with open(output_path, "w", encoding="utf-8") as out:
-        for line in open(input_path):
-            out.write(line)
-            count += 1
-    print(f"Copied {count} examples to RFT JSONL → {output_path}")
-    print("Note: RFT uses the same data format as SFT. The grader is configured in the training job, not the data.")
+        with open(input_path, encoding="utf-8") as inf:
+            for line in inf:
+                ex = json.loads(line)
+                msgs = ex.get("messages", [])
+                # Keep only system + user messages; RFT last message must be user
+                rft_msgs = [m for m in msgs if m["role"] in ("system", "user")]
+                if not rft_msgs or rft_msgs[-1]["role"] != "user":
+                    skipped += 1
+                    continue
+                # Extract assistant content as a reference answer placeholder
+                asst_msgs = [m for m in msgs if m["role"] == "assistant"]
+                expected = asst_msgs[-1]["content"] if asst_msgs else ""
+                rft_entry = {"messages": rft_msgs, "expected_answer": expected}
+                out.write(json.dumps(rft_entry, ensure_ascii=False) + "\n")
+                count += 1
+    print(f"Converted {count} examples to RFT JSONL → {output_path}")
+    if skipped:
+        print(f"  Skipped {skipped} examples (no user message)")
+    print("Note: Review 'expected_answer' fields and update your grader to use item.expected_answer.")
 
 
 def dpo_to_sft(input_path, output_path, system_prompt=None):
     """Extract chosen responses from DPO format to SFT format."""
     count = 0
     with open(output_path, "w", encoding="utf-8") as f:
-        for line in open(input_path):
-            ex = json.loads(line)
-            input_messages = ex["input"]["messages"]
-            chosen_messages = ex["preferred_output"]
+        with open(input_path, encoding="utf-8") as inf:
+            for line in inf:
+                ex = json.loads(line)
+                input_messages = ex["input"]["messages"]
+                chosen_messages = ex["preferred_output"]
 
-            messages = []
-            if system_prompt:
-                messages.append({"role": "system", "content": system_prompt})
-                messages.extend(m for m in input_messages if m["role"] != "system")
-            else:
-                messages.extend(input_messages)
-            messages.extend(chosen_messages)
-            f.write(json.dumps({"messages": messages}, ensure_ascii=False) + "\n")
-            count += 1
+                messages = []
+                if system_prompt:
+                    messages.append({"role": "system", "content": system_prompt})
+                    messages.extend(m for m in input_messages if m["role"] != "system")
+                else:
+                    messages.extend(input_messages)
+                messages.extend(chosen_messages)
+                f.write(json.dumps({"messages": messages}, ensure_ascii=False) + "\n")
+                count += 1
     print(f"Extracted {count} chosen examples to SFT JSONL → {output_path}")
 
 
@@ -173,8 +188,13 @@ def main():
     parser.add_argument("--assistant-column", default="response", help="Column name for assistant output")
     parser.add_argument("--system-prompt", default=None, help="System prompt to prepend")
 
-    # DPO generation
-    parser.add_argument("--endpoint", default=os.environ.get("AZURE_OPENAI_ENDPOINT"))
+    # DPO generation (needs API connection)
+    parser.add_argument("--base-url", default=os.environ.get("OPENAI_BASE_URL"),
+                        help="Project /v1/ URL (preferred)")
+    parser.add_argument("--endpoint", default=os.environ.get("AZURE_OPENAI_ENDPOINT"),
+                        help="Azure OpenAI endpoint (fallback)")
+    parser.add_argument("--project-endpoint", default=os.environ.get("AZURE_AI_PROJECT_ENDPOINT"),
+                        help="Azure AI project endpoint (Foundry SDK)")
     parser.add_argument("--api-key", default=os.environ.get("AZURE_OPENAI_API_KEY"))
     parser.add_argument("--base-model", default="gpt-4.1-mini", help="Base model for generating rejections")
 
@@ -191,10 +211,11 @@ def main():
                            args.assistant_column, args.system_prompt)
 
     elif args.format == "dpo":
-        if not args.endpoint or not args.api_key:
-            print("Error: --endpoint and --api-key required for DPO conversion")
-            sys.exit(1)
-        sft_to_dpo(args.input, args.output, args.endpoint, args.api_key, args.base_model)
+        client, method = get_clients(
+            base_url=args.base_url, azure_endpoint=args.endpoint,
+            project_endpoint=args.project_endpoint, api_key=args.api_key
+        )
+        sft_to_dpo(args.input, args.output, client, args.base_model)
 
     elif args.format == "rft":
         sft_to_rft(args.input, args.output)
