@@ -14,7 +14,7 @@ Manages the full RFT lifecycle for o4-mini and gpt-5 models:
 RFT differs fundamentally from SFT:
   - Requires a Python grader that scores model outputs (grade(sample, item) → float)
   - Supports tool-calling (agentic tasks) during training
-  - Billed hourly, not per-token — $102/hour for o4-mini
+  - Billed hourly, not per-token — typically $15-25/hour
   - Only 1 experiment per iteration (expensive)
   - Pass threshold calibration is mandatory (grader must have signal)
 
