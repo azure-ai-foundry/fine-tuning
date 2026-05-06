@@ -19,46 +19,21 @@ Usage:
 
   python submit_training.py --endpoint https://<resource>.openai.azure.com --api-key KEY \
       --training-file-id file-abc123 --validation-file-id file-def456 \
-      --model gpt-oss-20b-11 --type sft --epochs 2 --lr 0.5 --use-rest
+      --model gpt-oss-20b --type sft --epochs 2 --lr 0.5 --use-rest
 
   python submit_training.py --base-url <url> --api-key KEY \
       --training-file-id file-abc123 --validation-file-id file-def456 \
       --model o4-mini-2025-04-16 --type rft --grader-file grader.py
 """
 
-import argparse
 import json
 import os
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import HelpOnErrorParser
+from common import HelpOnErrorParser, get_clients, upload_file
 
-import openai
 import requests
-
-
-def get_client(base_url=None, endpoint=None, api_key=None):
-    """Create client. Prefer /v1/ project URL (OpenAI) over Azure endpoint."""
-    if base_url:
-        return openai.OpenAI(base_url=base_url, api_key=api_key)
-    return openai.AzureOpenAI(
-        azure_endpoint=endpoint,
-        api_key=api_key,
-        api_version="2025-04-01-preview",
-    )
-
-
-def upload_file(client, filepath):
-    """Upload a file and wait for processing."""
-    print(f"Uploading {filepath}...")
-    with open(filepath, "rb") as f:
-        result = client.files.create(purpose="fine-tune", file=f)
-    print(f"  File ID: {result.id}, waiting for processing...")
-    client.files.wait_for_processing(result.id)
-    print(f"  Ready.")
-    return result.id
 
 
 def submit_sft_sdk(client, model, train_id, val_id, epochs=2, lr=1.0, batch_size=None, suffix=None):
@@ -81,8 +56,8 @@ def submit_sft_sdk(client, model, train_id, val_id, epochs=2, lr=1.0, batch_size
     return {"id": job.id, "status": job.status, "model": model, "method": "sdk"}
 
 
-def submit_sft_rest(endpoint, api_key, model, train_id, val_id, epochs=2, lr=1.0, batch_size=None):
-    """Submit SFT job via REST API (fallback for models like gpt-oss-20b-11)."""
+def submit_sft_rest(endpoint, api_key, model, train_id, val_id, epochs=2, lr=1.0, batch_size=None, suffix=None):
+    """Submit SFT job via REST API (fallback for models like gpt-oss-20b)."""
     url = f"{endpoint}/openai/fine_tuning/jobs?api-version=2025-04-01-preview"
     body = {
         "model": model,
@@ -94,17 +69,30 @@ def submit_sft_rest(endpoint, api_key, model, train_id, val_id, epochs=2, lr=1.0
     }
     if batch_size:
         body["hyperparameters"]["batch_size"] = batch_size
+    if suffix:
+        body["suffix"] = suffix
 
     resp = requests.post(url, headers={
         "Content-Type": "application/json",
         "api-key": api_key,
-    }, json=body)
+    }, json=body, timeout=(10, 120))
 
     if resp.status_code in (200, 201):
-        data = resp.json()
-        return {"id": data["id"], "status": data["status"], "model": model, "method": "rest"}
+        try:
+            data = resp.json()
+            return {"id": data["id"], "status": data["status"], "model": model, "method": "rest"}
+        except (ValueError, KeyError) as e:
+            raise RuntimeError(
+                f"REST submission returned {resp.status_code} but response was not valid JSON: {resp.text[:200]}"
+            ) from e
     else:
-        raise RuntimeError(f"REST submission failed ({resp.status_code}): {resp.text}")
+        try:
+            err_msg = resp.json().get('error', {}).get('message', 'Unknown error')
+        except (ValueError, KeyError):
+            err_msg = resp.text[:200] if resp.text else "Unknown error"
+        raise RuntimeError(
+            f"REST submission failed ({resp.status_code}): {err_msg}"
+        )
 
 
 def submit_rft(client, model, train_id, val_id, grader_source):
@@ -127,12 +115,35 @@ def submit_rft(client, model, train_id, val_id, grader_source):
     return {"id": job.id, "status": job.status, "model": model, "method": "sdk-rft"}
 
 
+def submit_dpo(client, model, train_id, val_id, epochs=2, lr=1.0, beta=0.1, suffix=None):
+    """Submit DPO job."""
+    job = client.fine_tuning.jobs.create(
+        model=model,
+        training_file=train_id,
+        validation_file=val_id,
+        suffix=suffix or None,
+        method={
+            "type": "dpo",
+            "dpo": {
+                "hyperparameters": {
+                    "n_epochs": epochs,
+                    "beta": beta,
+                    "learning_rate_multiplier": lr,
+                },
+            },
+        },
+    )
+    return {"id": job.id, "status": job.status, "model": model, "method": "sdk-dpo"}
+
+
 def main():
     parser = HelpOnErrorParser(description="Submit fine-tuning jobs on Azure AI Foundry")
     parser.add_argument("--base-url", default=os.environ.get("OPENAI_BASE_URL"),
-                        help="Project /v1/ URL (preferred). Uses openai.OpenAI().")
+                        help="Project /v1/ URL (preferred)")
     parser.add_argument("--endpoint", default=os.environ.get("AZURE_OPENAI_ENDPOINT"),
-                        help="Azure OpenAI endpoint (fallback). Uses AzureOpenAI().")
+                        help="Azure OpenAI endpoint (fallback)")
+    parser.add_argument("--project-endpoint", default=os.environ.get("AZURE_AI_PROJECT_ENDPOINT"),
+                        help="Azure AI project endpoint (Foundry SDK)")
     parser.add_argument("--api-key", default=os.environ.get("AZURE_OPENAI_API_KEY"),
                         help="API key")
     parser.add_argument("--model", required=True, help="Base model name (e.g., gpt-4.1-mini)")
@@ -159,18 +170,14 @@ def main():
 
     # REST fallback
     parser.add_argument("--use-rest", action="store_true",
-                        help="Force REST API (needed for gpt-oss-20b-11)")
+                        help="Force REST API (needed for gpt-oss-20b)")
 
     args = parser.parse_args()
 
-    if not args.api_key:
-        print("Error: Set --api-key or AZURE_OPENAI_API_KEY")
-        sys.exit(1)
-    if not args.base_url and not args.endpoint:
-        print("Error: Set --base-url or --endpoint (or env vars OPENAI_BASE_URL / AZURE_OPENAI_ENDPOINT)")
-        sys.exit(1)
-
-    client = get_client(base_url=args.base_url, endpoint=args.endpoint, api_key=args.api_key)
+    client, method = get_clients(
+        base_url=args.base_url, azure_endpoint=args.endpoint,
+        project_endpoint=args.project_endpoint, api_key=args.api_key
+    )
 
     # Resolve file IDs
     train_id = args.training_file_id
@@ -185,52 +192,44 @@ def main():
         sys.exit(1)
 
     # Submit
-    try:
-        if args.type == "rft":
-            if not args.grader_file:
-                print("Error: --grader-file required for RFT")
-                sys.exit(1)
-            with open(args.grader_file) as f:
-                grader_source = f.read()
-            result = submit_rft(client, args.model, train_id, val_id, grader_source)
-        elif args.type == "dpo":
-            job = client.fine_tuning.jobs.create(
-                model=args.model,
-                training_file=train_id,
-                validation_file=val_id,
-                suffix=args.suffix or None,
-                method={
-                    "type": "dpo",
-                    "dpo": {
-                        "hyperparameters": {
-                            "n_epochs": args.epochs,
-                            "beta": args.beta,
-                            "learning_rate_multiplier": args.lr,
-                        },
-                    },
-                },
-            )
-            result = {"id": job.id, "status": job.status, "model": args.model, "method": "sdk-dpo"}
-        elif args.use_rest:
-            result = submit_sft_rest(args.endpoint, args.api_key, args.model,
-                                     train_id, val_id, args.epochs, args.lr, args.batch_size)
-        else:
+    if args.type == "rft":
+        if not args.grader_file:
+            print("Error: --grader-file required for RFT")
+            sys.exit(1)
+        with open(args.grader_file, encoding="utf-8") as f:
+            grader_source = f.read()
+        result = submit_rft(client, args.model, train_id, val_id, grader_source)
+    elif args.type == "dpo":
+        result = submit_dpo(client, args.model, train_id, val_id,
+                            args.epochs, args.lr, args.beta, args.suffix)
+    elif args.use_rest:
+        if not args.endpoint or not args.api_key:
+            print("Error: --use-rest requires --endpoint and --api-key (REST does not support DefaultAzureCredential)")
+            sys.exit(1)
+        result = submit_sft_rest(args.endpoint, args.api_key, args.model,
+                                 train_id, val_id, args.epochs, args.lr, args.batch_size, args.suffix)
+    else:
+        # SFT via SDK with REST fallback for OSS models
+        try:
             result = submit_sft_sdk(client, args.model, train_id, val_id,
                                     args.epochs, args.lr, args.batch_size, args.suffix)
-    except Exception as e:
-        if "does not support fine-tuning with Standard TrainingType" in str(e):
-            print(f"SDK failed for {args.model}, falling back to REST API...")
-            result = submit_sft_rest(args.endpoint, args.api_key, args.model,
-                                     train_id, val_id, args.epochs, args.lr, args.batch_size)
-        else:
-            raise
+        except Exception as e:
+            if "does not support fine-tuning with Standard TrainingType" in str(e):
+                if not args.endpoint or not args.api_key:
+                    print(f"SDK failed for {args.model}. REST fallback requires --endpoint and --api-key.")
+                    sys.exit(1)
+                print(f"SDK failed for {args.model}, falling back to REST API...")
+                result = submit_sft_rest(args.endpoint, args.api_key, args.model,
+                                         train_id, val_id, args.epochs, args.lr, args.batch_size, args.suffix)
+            else:
+                raise
 
     print(f"\nJob submitted successfully:")
     print(json.dumps(result, indent=2))
 
     # Save job info
     outfile = f"ft_job_{result['id']}.json"
-    with open(outfile, "w") as f:
+    with open(outfile, "w", encoding="utf-8") as f:
         json.dump({**result, "epochs": args.epochs, "lr": args.lr,
                     "batch_size": args.batch_size, "train_file": train_id,
                     "val_file": val_id}, f, indent=2)

@@ -118,6 +118,22 @@ Then add batch size variation on the best-performing configuration.
 
 **o4-mini (RFT)**: Hyperparameters are less tunable in RFT — the grader quality matters more than LR. Focus effort on the grader, not the HP sweep.
 
+## RFT Hyperparameters
+
+RFT has a different set of hyperparameters than SFT/DPO. The grader is the most important "hyperparameter" — get that right first, then tune these:
+
+| Parameter | Description | Recommended Start |
+|-----------|-------------|-------------------|
+| `reasoning_effort` | `"low"`, `"medium"`, `"high"` — controls thinking depth per rollout | `"medium"` |
+| `compute_multiplier` | Scales number of rollouts per step (more = better signal, more cost) | `1.5` |
+| `learning_rate_multiplier` | Scales LR (same as SFT) | `1.0` |
+| `n_epochs` | Data passes | `2–3` |
+| `eval_interval` | Evaluate every N steps | `5` |
+| `eval_samples` | Validation examples per eval | `10` |
+| `max_episode_steps` | Max tool calls + reasoning steps per rollout (agentic RFT only) | `5–10` |
+
+**Key differences from SFT**: RFT cost is time-based (~$100/hr for o4-mini), not token-based. `compute_multiplier` is the main cost lever. Start low, increase if reward is climbing slowly.
+
 ## OSS Model Hyperparameter Guide
 
 OSS models (Ministral-3B, gpt-oss-20b, Llama-3.3-70B, Qwen-32B) behave differently from OpenAI models. Key differences:

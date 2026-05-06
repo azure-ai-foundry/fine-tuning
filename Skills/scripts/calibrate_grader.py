@@ -23,7 +23,6 @@ import argparse
 import json
 import os
 import random
-import re
 import sys
 import time
 
@@ -32,10 +31,21 @@ from common import HelpOnErrorParser, get_clients
 
 
 def load_grader(grader_path):
-    """Load and compile a Python grader file. Returns the grade() function."""
-    with open(grader_path) as f:
+    """Load and compile a Python grader file. Returns the grade() function.
+
+    SECURITY: This executes the grader file as Python code. Only load grader
+    files that you wrote or reviewed — never load untrusted files from the
+    internet or unknown sources. The grader runs with the same permissions as
+    this script.
+    """
+    grader_path = os.path.abspath(grader_path)
+    if not os.path.isfile(grader_path):
+        print(f"❌ Grader file not found: {grader_path}")
+        sys.exit(1)
+    with open(grader_path, encoding="utf-8") as f:
         source = f.read()
     namespace = {}
+    # WARNING: executes arbitrary code from grader_path — must be a trusted local file
     exec(compile(source, grader_path, "exec"), namespace)
     if "grade" not in namespace:
         print(f"❌ Grader file must define a grade(sample, item) function")
@@ -71,9 +81,12 @@ def run_model(client, model, messages, tools_schema=None, max_retries=3):
 
 def calibrate(client, model, data, grade_fn, tools_schema=None, n=30):
     """Run base model on data, score with grader, output threshold analysis."""
+    if not data:
+        print("No examples to evaluate. Check your data file.")
+        return [], None
+
     # Sample if dataset is larger than n
     if len(data) > n:
-        random.seed(42)
         data = random.sample(data, n)
 
     print(f"Running {model} on {len(data)} examples...\n")
@@ -110,7 +123,11 @@ def calibrate(client, model, data, grade_fn, tools_schema=None, n=30):
         time.sleep(0.5)  # Rate limiting
 
     # Analysis
-    avg = sum(scores) / len(scores)
+    scored = [s for s in scores if s is not None]
+    if not scored:
+        print("\n❌ No examples were scored successfully. Check model access and data format.")
+        return [], None
+    avg = sum(scored) / len(scored)
     print(f"\n{'='*60}")
     print(f"  BASE MODEL GRADER CALIBRATION ({len(scores)} examples)")
     print(f"  Average score: {avg:.1%}")
@@ -123,7 +140,7 @@ def calibrate(client, model, data, grade_fn, tools_schema=None, n=30):
     best_distance = float("inf")
 
     for threshold in [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 1.0]:
-        pass_rate = sum(1 for s in scores if s >= threshold) / len(scores)
+        pass_rate = sum(1 for s in scored if s >= threshold) / len(scored)
         fail_rate = 1 - pass_rate
 
         if 0.25 <= fail_rate <= 0.50:
@@ -178,6 +195,8 @@ def build_parser():
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument("--base-url", default=os.environ.get("OPENAI_BASE_URL"), help="Project /v1/ endpoint URL")
+    parser.add_argument("--endpoint", default=os.environ.get("AZURE_OPENAI_ENDPOINT"),
+                        help="Azure OpenAI endpoint (fallback)")
     parser.add_argument("--api-key", default=os.environ.get("AZURE_OPENAI_API_KEY"), help="API key")
     parser.add_argument("--project-endpoint", default=os.environ.get("AZURE_AI_PROJECT_ENDPOINT"),
                         help="Azure AI project endpoint")
@@ -200,10 +219,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
     random.seed(args.seed)
 
-    client, method = get_clients(base_url=args.base_url, project_endpoint=args.project_endpoint, api_key=args.api_key)
+    client, method = get_clients(base_url=args.base_url, azure_endpoint=args.endpoint, project_endpoint=args.project_endpoint, api_key=args.api_key)
 
     # Load data
-    with open(args.data) as f:
+    with open(args.data, encoding="utf-8") as f:
         data = [json.loads(line) for line in f]
     print(f"Loaded {len(data)} examples from {args.data}")
 
@@ -216,4 +235,4 @@ if __name__ == "__main__":
     if args.tools:
         tools_schema = json.loads(args.tools)
 
-    scores, threshold = calibrate(client, args.model, data, grade_fn, tools_schema, args.n)
+    calibrate(client, args.model, data, grade_fn, tools_schema, args.n)

@@ -22,6 +22,7 @@ A **skill** is a structured set of instructions, reference documentation, and re
 | **Model deployment** | Deploy fine-tuned models with the correct format and SKU |
 | **Model evaluation** | Score outputs with custom LLM judges, compare accuracy and token cost |
 | **Resource cleanup** | Delete old files and deployments to reclaim quota |
+| **Autonomous fine-tuning** | *(Experimental)* Full SFT loop — analyze, prepare, baseline, train, evaluate, iterate |
 
 ## Quick Start
 
@@ -34,6 +35,10 @@ If you cloned the [microsoft-foundry/fine-tuning](https://github.com/microsoft-f
 - Codex / other agents → `.agents/skills/azure-ai-fine-tuning`
 
 Just open the repo and start asking questions — no manual setup needed.
+
+> ⚠️ **Windows users:** Git on Windows does not create symlinks by default. If your agent can't find the skill, either:
+> 1. Enable Developer Mode in Windows Settings → then re-clone with `git clone -c core.symlinks=true`
+> 2. Or use manual setup (below) — copy `Skills/` into your project directly
 
 **Manual setup:**
 Copy the `Skills/` directory into your project and reference `SKILL.md` in your agent's instructions file (`copilot-instructions.md`, `CLAUDE.md`, etc.).
@@ -72,7 +77,7 @@ Skills/
 ├── README.md                         # This file
 ├── references/
 │   ├── training-types.md             # SFT vs DPO vs RFT comparison
-│   ├── hyperparameters.md            # Learning rate, epochs, batch size guidance
+│   ├── hyperparameters.md            # Learning rate, epochs, batch size guidance (SFT + RFT)
 │   ├── dataset-formats.md            # JSONL format specs for each training type
 │   ├── deployment-formats.md         # Model format, SKU, and version mapping
 │   ├── evaluation-methodology.md     # Eval rubric design and grader types
@@ -80,7 +85,7 @@ Skills/
 │   ├── grader-design.md             # RFT grader design (type selection, partial credit, calibration)
 │   ├── foundry-cli.md               # azd ai finetuning CLI reference
 │   ├── vision-fine-tuning.md         # Image/video fine-tuning (gpt-4o, gpt-4.1)
-│   ├── cost-management.md            # Training costs and budget planning
+│   ├── cost-management.md            # Training costs, tier selection, and budget planning
 │   ├── distillation.md              # Teacher→student distillation workflow
 │   ├── agentic-rft.md              # Tool calling + endpoint graders for RFT
 │   ├── reward-hacking-prevention.md  # Preventing reward hacking in RFT
@@ -91,8 +96,10 @@ Skills/
 │   ├── dataset-creation.md           # Data generation (manual, LLM augmentation, synthetic)
 │   ├── iterative-training.md         # Training and HP tuning loop
 │   ├── diagnose-poor-results.md      # Troubleshooting bad results
-│   └── experiment-review.md          # Post-experiment review and next steps
+│   ├── experiment-review.md          # Post-experiment review and next steps
+│   └── auto-finetune.md             # Autonomous fine-tuning workflow (experimental)
 ├── scripts/
+│   ├── auto_finetune.py              # Autonomous SFT orchestrator (experimental)
 │   ├── submit_training.py            # Submit SFT/DPO/RFT jobs (SDK + REST fallback)
 │   ├── monitor_training.py           # Poll a running job until completion
 │   ├── calibrate_grader.py           # RFT grader threshold calibration
@@ -103,12 +110,14 @@ Skills/
 │   ├── generate_distillation_data.py # Generate distillation training data
 │   ├── score_dataset.py              # Dataset quality scoring
 │   ├── cleanup.py                    # Delete old files, deployments, pending jobs
-│   ├── common.py                     # Shared auth helpers + HelpOnErrorParser
+│   ├── common.py                     # Shared auth helpers (auto-refreshing AAD tokens)
 │   └── validate/
 │       ├── validate_sft.py           # SFT JSONL validator
 │       ├── validate_dpo.py           # DPO JSONL validator
 │       ├── validate_rft.py           # RFT JSONL validator
 │       └── data_stats.py             # Token counts and cost estimates
+├── tests/
+│   └── test_skills.py                # Compilation, security, and code quality tests
 └── examples/
     └── sample-data/
         ├── sft_sample.jsonl          # SFT format reference
@@ -128,12 +137,13 @@ Skills/
 
 | Model | SFT | DPO | RFT | Vision | Notes |
 |-------|-----|-----|-----|--------|-------|
-| gpt-4.1-mini | ✅ | ✅ | ❌ | ❌ | Best general-purpose FT model |
-| gpt-4.1-nano | ✅ | ❌ | ❌ | ❌ | Best for distillation targets |
-| gpt-4o | ✅ | ✅ | ❌ | ✅ | Vision fine-tuning supported |
-| gpt-4.1 | ✅ | ✅ | ❌ | ✅ | Vision fine-tuning supported |
-| o4-mini | ❌ | ❌ | ✅ | ❌ | RFT with graders |
-| o3-mini | ❌ | ❌ | ✅ | ❌ | RFT with graders |
+| gpt-4.1 | ✅ | ✅ | ❌ | ✅ | Best general-purpose FT model (SFT + DPO + Vision) |
+| gpt-4.1-mini | ✅ | ❌ | ❌ | ❌ | SFT only |
+| gpt-4.1-nano | ✅ | ❌ | ❌ | ❌ | SFT only; good distillation target |
+| gpt-4o | ✅ | ✅ | ❌ | ✅ | SFT + DPO + Vision |
+| gpt-4o-mini | ✅ | ❌ | ❌ | ❌ | SFT only |
+| o4-mini | ❌ | ❌ | ✅ | ❌ | RFT only with graders (hourly billing) |
+| gpt-5 | ❌ | ❌ | ✅ | ❌ | RFT only with graders (hourly billing) |
 | Ministral-3B | ✅ | ❌ | ❌ | ❌ | OSS; requires `globalStandard` training type |
 | gpt-oss-20b | ✅ | ❌ | ❌ | ❌ | OSS; requires `globalStandard` training type |
 | Llama-3.3-70B | ✅ | ❌ | ❌ | ❌ | OSS; requires `globalStandard` training type |

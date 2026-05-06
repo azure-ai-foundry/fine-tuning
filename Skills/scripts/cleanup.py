@@ -8,22 +8,21 @@
 """
 cleanup.py — Clean up fine-tuning resources to avoid quota exhaustion.
 
-Lists and optionally deletes deployments, uploaded files, and completed/failed
-jobs. Useful after experimentation to reclaim quota (max 100 files per resource,
+Lists and optionally deletes uploaded files and cancels pending jobs.
+Useful after experimentation to reclaim quota (max 100 files per resource,
 deployment slots are limited).
 
 Usage:
   python cleanup.py --list                            # List all resources
-  python cleanup.py --list --type deployments         # List only deployments
-  python cleanup.py --delete-deployments              # Delete all FT deployments
+  python cleanup.py --list --type files               # List only files
   python cleanup.py --delete-files --older-than 7     # Delete files older than 7 days
-  python cleanup.py --delete-all                      # Delete all FT deployments + old files
+  python cleanup.py --delete-files --dry-run          # Preview what would be deleted
+  python cleanup.py --cancel-pending                  # Cancel queued jobs
 """
 
 import argparse
 import os
 import sys
-import time
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -205,6 +204,8 @@ def build_parser():
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument("--base-url", default=os.environ.get("OPENAI_BASE_URL"), help="Project /v1/ endpoint URL")
+    parser.add_argument("--endpoint", default=os.environ.get("AZURE_OPENAI_ENDPOINT"),
+                        help="Azure OpenAI endpoint (fallback)")
     parser.add_argument("--api-key", default=os.environ.get("AZURE_OPENAI_API_KEY"), help="API key")
     parser.add_argument("--project-endpoint", default=os.environ.get("AZURE_AI_PROJECT_ENDPOINT"),
                         help="Azure AI project endpoint")
@@ -228,7 +229,7 @@ if __name__ == "__main__":
         sys.exit(0)
 
     args = parser.parse_args()
-    client, method = get_clients(base_url=args.base_url, project_endpoint=args.project_endpoint, api_key=args.api_key)
+    client, method = get_clients(base_url=args.base_url, azure_endpoint=args.endpoint, project_endpoint=args.project_endpoint, api_key=args.api_key)
 
     if args.list:
         show_list(client, args.type)
