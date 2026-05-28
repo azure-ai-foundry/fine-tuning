@@ -1,13 +1,82 @@
 # Dataset Creation Workflow
 
-> **Three paths to training data:**
+> **Four paths to training data:**
+> 0. **Foundry Data Generation API (recommended first)** — First-party service that turns agent traces, documents, or agent definitions directly into fine-tuning or evaluation JSONL. Best choice when you have a deployed agent or a corpus.
 > 1. **Manual curation** — Write examples by hand or collect from production data, following the formats in `references/dataset-formats.md`
 > 2. **LLM augmentation** — Start with a small curated set and use an LLM to expand it through rephrasing and variation
-> 3. **Synthetic generation** — Generate training data from scratch using LLM prompts or NVIDIA Data Designer
+> 3. **Custom synthetic generation** — Generate training data from scratch using LLM prompts or NVIDIA Data Designer
 >
 > These approaches combine well: curate seed examples → augment for diversity → generate at scale.
 >
 > If you already have data, skip to validation: `python scripts/validate/validate_sft.py your_data.jsonl`
+
+## Approach 0: Foundry Data Generation API (preview)
+
+The Azure AI Foundry **Data Generation API** is a managed service that produces SFT or evaluation JSONL directly from real-world sources. It's the recommended starting point when:
+
+- You have a **deployed agent** with traffic (or you can generate some) → distill it into a smaller, cheaper model.
+- You have a **knowledge corpus** (policy doc, FAQ, manual) → bootstrap Q&A training data grounded in the source.
+- You have a **deployed agent definition** with tools but no traffic yet → cold-start tool-calling training data.
+
+Picking source + recipe + scenario gives you the full surface (see `references/data-generation-api.md`):
+
+| You have… | Workflow |
+|-----------|----------|
+| A deployed agent emitting traces | `workflows/traces-to-dataset.md` |
+| A document, policy text, FAQ, or knowledge base | `workflows/synthetic-datagen.md` |
+| A new agent with tools but no traffic | `workflows/synthetic-datagen.md` |
+
+Minimal end-to-end:
+
+```python
+import uuid
+from datetime import datetime, timedelta, timezone
+from azure.ai.projects import AIProjectClient
+from azure.ai.projects.models import (
+    DataGenerationJob, DataGenerationJobInputs, DataGenerationJobOutputOptions,
+    DataGenerationJobScenario,
+    TracesDataGenerationJobSource, TracesDataGenerationJobOptions,
+)
+from azure.identity import DefaultAzureCredential
+
+project_client = AIProjectClient(
+    endpoint="https://<resource>.services.ai.azure.com/api/projects/<project>",
+    credential=DefaultAzureCredential(),
+)
+
+run_id = f"{datetime.now(timezone.utc).strftime('%y%m%d%H%M%S')}-{uuid.uuid4().hex[:4]}"
+output_name = f"distill-prod-{run_id}"  # ≤50 chars; must be unique per run
+
+job = project_client.beta.datasets.create_generation_job(
+    job=DataGenerationJob(inputs=DataGenerationJobInputs(
+        name=output_name,
+        scenario=DataGenerationJobScenario.SUPERVISED_FINETUNING,
+        sources=[TracesDataGenerationJobSource(
+            agent_name="my-agent", agent_version="3",
+            start_time=datetime.now(timezone.utc) - timedelta(hours=24),
+            end_time=datetime.now(timezone.utc),
+        )],
+        options=TracesDataGenerationJobOptions(max_samples=200, train_split=0.8),
+        output_options=DataGenerationJobOutputOptions(name=output_name),
+    )),
+)
+```
+
+Or use the wrapper script:
+
+```bash
+python scripts/generate_dataset.py \
+    --project-endpoint $env:AZURE_AI_PROJECT_ENDPOINT \
+    --source traces --agent-name my-agent --agent-version 3 \
+    --recipe traces --scenario sft \
+    --max-samples 200 --train-split 0.8 --hours 24 --download
+```
+
+### When to skip the Data Generation API
+
+- You need a format the API doesn't emit natively (e.g. DPO) → use Approach 1 or 3.
+- You need fine-grained control over diversity axes or quality judges → use Approach 3 (NVIDIA Data Designer).
+- Your corpus is highly proprietary and can't go through a managed pipeline → use Approach 1.
 
 ## Approach 1: Manual Curation
 
@@ -53,7 +122,7 @@ Original: [your example]
 
 A cheap model (gpt-4.1-mini or equivalent) works well for rephrasing since no new ground truth is needed — you're just diversifying how the same question is asked.
 
-## Approach 3: Synthetic Generation
+## Approach 3: Custom Synthetic Generation
 
 Generate training data from scratch using LLM prompts. Two options depending on scale and complexity.
 

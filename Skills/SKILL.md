@@ -29,6 +29,8 @@ Read the workflow file that matches the user's current stage:
 - **First time / just want to get started** → `workflows/quickstart.md`
 - **Starting from scratch** → `workflows/full-pipeline.md`
 - **Need a dataset** → `workflows/dataset-creation.md`
+- **Have a deployed agent — distill its traces into a smaller model** → `workflows/traces-to-dataset.md`
+- **No traces yet — generate Q&A from a doc or tool-use from an OpenAPI spec** → `workflows/synthetic-datagen.md`
 - **Training and iterating** → `workflows/iterative-training.md`
 - **Results are bad** → `workflows/diagnose-poor-results.md`
 - **Reviewing results & planning next run** → `workflows/experiment-review.md`
@@ -44,6 +46,7 @@ Read the relevant reference file before performing any step:
 | `references/training-types.md` | Choosing between SFT, DPO, and RFT |
 | `references/hyperparameters.md` | Setting learning rate, batch size, epochs |
 | `references/dataset-formats.md` | Preparing or converting training data |
+| `references/data-generation-api.md` | Foundry Data Generation API (preview) — sources, recipes, scenarios for traces→dataset and synthetic datagen |
 | `references/deployment-formats.md` | Deploying a fine-tuned model |
 | `references/evaluation-methodology.md` | Designing an eval rubric |
 | `references/training-curve-analysis.md` | Reading training logs and curves |
@@ -66,8 +69,9 @@ Reusable Python scripts in `scripts/`. Each is self-contained with inline docume
 | `auto_finetune.py` | **Autonomous orchestrator (experimental, SFT only)** — runs the full loop: analyze → generate → prepare → baseline → train → evaluate → review → iterate. Good for exploration; use individual scripts for production workflows or RFT. |
 | `submit_training.py` | Submit SFT, DPO, or RFT jobs (SDK + REST fallback) |
 | `monitor_training.py` | Poll a running job until completion, streaming events in real time |
+| `generate_dataset.py` | Generate fine-tuning or eval data via the Foundry Data Generation API (preview) — traces → SFT/eval, doc → Q&A, OpenAPI spec → tool-use. SDK + REST modes. Also includes `--tools-from`/`--tools-to-openapi-out` converter for OpenAI tool-spec → OpenAPI 3.0. |
 | `calibrate_grader.py` | Run base model through your RFT grader to find optimal pass_threshold |
-| `generate_distillation_data.py` | Generate training data from a teacher model for distillation |
+| `generate_distillation_data.py` | Generate training data from a teacher model for distillation (legacy custom-script approach) |
 | `check_training.py` | Pull training curves, detect overfitting, list checkpoints |
 | `deploy_model.py` | Deploy fine-tuned models via ARM REST API |
 | `cleanup.py` | List and delete old deployments, files, and pending jobs to reclaim quota |
@@ -91,6 +95,10 @@ Reusable Python scripts in `scripts/`. Each is self-contained with inline docume
 | Task | Command |
 |------|---------|
 | Validate SFT data | `python scripts/validate/validate_sft.py data.jsonl` |
+| Generate dataset from agent traces | `python scripts/generate_dataset.py --source traces --agent-name <name> --agent-version <v> --recipe traces --scenario sft --max-samples 200 --train-split 0.8 --hours 24 --download` |
+| Generate Q&A from a doc | `python scripts/generate_dataset.py --source prompt-file --prompt-file policy.md --recipe qna --scenario sft --teacher gpt-4.1-mini --max-samples 100 --train-split 0.9 --download` |
+| Convert OpenAI tools to OpenAPI 3.0 (for tool-use) | `python scripts/generate_dataset.py --tools-from openai_tools.json --tools-to-openapi-out openapi.json` |
+| Generate tool-use SFT (upload openapi.json first) | `python scripts/generate_dataset.py --source file --file-id <openapi-file-id> --recipe tool-use --scenario sft --teacher gpt-4.1-mini --max-samples 50 --train-split 0.8 --download` |
 | Submit SFT job | `python scripts/submit_training.py --model gpt-4.1-mini --training-file train.jsonl --validation-file val.jsonl --type sft` |
 | Monitor job | `python scripts/monitor_training.py --job-id ftjob-xxx` |
 | Analyze curves | `python scripts/check_training.py --job-id ftjob-xxx` |
@@ -239,4 +247,24 @@ These patterns are based on extensive end-to-end testing across SFT, DPO, and RF
 | Misaligned RFT grader | Reward hacking — model games the grader | Use same grading logic for training and eval |
 | Small OSS models on large label sets | Model invents synonym labels (capacity limit) | Use ≥20B parameter models for 50+ classes |
 
+## Testing this skill
 
+The skill ships with two test suites under `tests/`:
+
+```powershell
+cd Skills
+
+# Fast checks (default — skips anything that hits the live service)
+python -m pytest tests/ -v
+
+# End-to-end suite against a real Foundry project
+$env:FOUNDRY_PROJECT_ENDPOINT = "https://<resource>.services.ai.azure.com/api/projects/<project>"
+$env:FOUNDRY_TEACHER_MODEL    = "gpt-4.1"             # any deployed chat model
+$env:FOUNDRY_AGENT_NAME       = "<your-agent>"        # for traces/agent tests
+$env:FOUNDRY_AGENT_VERSION    = "1"
+$env:E2E_JOB_TIMEOUT          = "900"                  # 15 min per non-tool-use job
+$env:E2E_TOOL_USE_TIMEOUT     = "2700"                 # 45 min cap on tool-use jobs
+python -m pytest tests/test_data_generation_e2e.py -m live -v
+```
+
+`-m live` selects the 9 live tests; the default `-m "not live"` runs only the 8 CLI/argparse tests plus the 48 existing skill-consistency tests. Authentication uses `DefaultAzureCredential` — run `az login` first.
