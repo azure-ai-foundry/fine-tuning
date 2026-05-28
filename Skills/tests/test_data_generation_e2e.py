@@ -563,6 +563,93 @@ def test_file_source_rejected_for_simpleqna_eval(project_client, aoai_client, te
         except Exception: pass
 
 
+@pytest.mark.live
+@pytest.mark.slow
+def test_auto_finetune_foundry_generate_e2e(project_client, project_endpoint, teacher_model, tmp_path):
+    """auto_finetune.py foundry-generate ties task_spec → Foundry datagen → SFT JSONL.
+
+    Validates the end-to-end wiring: cmd_foundry_generate shells out to
+    generate_dataset.py and writes a normalised generated_data.jsonl that the
+    prepare phase can consume.
+
+    Uses prompt-file source (which uploads the prompt as a user_data file
+    internally) for two reasons:
+      1. Some projects/teacher deployments reject inline Prompt+SFT with the
+         generic "Something went wrong" error; uploading as a file is the
+         robust path. (See references/data-generation-api.md — error table.)
+      2. File source proves the cmd_foundry_generate path also works when
+         a real upload is in the loop.
+    """
+    auto_ft = os.path.join(os.path.dirname(__file__), "..", "scripts", "auto_finetune.py")
+
+    work = tmp_path / "auto_ft_run"
+    work.mkdir()
+    task_spec = work / "task_spec.json"
+
+    # Hand-write a minimal task spec (skip the analyze phase to keep test focused
+    # on the datagen integration — analyze is covered separately by test_skills.py).
+    task_spec.write_text(json.dumps({
+        "task_name": "http-qa",
+        "description": "Q&A about HTTP/1.1 mechanics — methods, status codes, caching, auth, content negotiation.",
+        "data_mode": "prompt_only",
+        "hypotheses": [{"task_type": "generation"}],
+    }), encoding="utf-8")
+
+    # Write a substantive document the service can mine for Q&A (≥1 KB substantive content)
+    doc = work / "http_doc.md"
+    doc.write_text(
+        "# HTTP/1.1 Reference\n\n"
+        + ("HTTP/1.1 defines the methods GET (retrieve), POST (submit), PUT (replace), "
+           "DELETE (remove), HEAD (metadata only), OPTIONS (allowed methods), and PATCH "
+           "(partial update). Status codes are grouped: 1xx informational (100 Continue), "
+           "2xx success (200 OK, 201 Created, 204 No Content), 3xx redirection (301 Moved "
+           "Permanently, 304 Not Modified), 4xx client error (400 Bad Request, 401 Unauthorized, "
+           "403 Forbidden, 404 Not Found, 429 Too Many Requests), 5xx server error (500 "
+           "Internal Server Error, 502 Bad Gateway, 503 Service Unavailable). Caching is "
+           "controlled by Cache-Control directives: max-age, no-cache, no-store, private, "
+           "public, must-revalidate, immutable. ETag and If-None-Match enable conditional "
+           "requests. Authentication schemes: Basic (base64-encoded credentials), Bearer "
+           "(used by OAuth 2.0), Digest (MD5 challenge-response). Content negotiation uses "
+           "Accept, Accept-Language, Accept-Encoding (gzip, br, deflate), and the server "
+           "responds with Content-Type and Vary. Connection management: Keep-Alive header, "
+           "persistent connections by default. Range requests via Range header return 206 "
+           "Partial Content. Chunked transfer encoding streams unknown-length responses.\n\n"
+           ) * 5,
+        encoding="utf-8",
+    )
+
+    out_dir = work / "generated"
+    cmd = [
+        sys.executable, auto_ft, "foundry-generate",
+        "--task-spec", str(task_spec),
+        "--source", "prompt-file",
+        "--prompt-file", str(doc),
+        "--recipe", "qna",
+        "--scenario", "sft",
+        "--max-samples", "15",
+        "--train-split", "0.8",
+        "--teacher", teacher_model,
+        "--project-endpoint", project_endpoint,
+        "--output-dir", str(out_dir),
+    ]
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", timeout=900)
+    assert r.returncode == 0, (
+        f"foundry-generate failed (rc={r.returncode})\n"
+        f"stdout (last 2000):\n{r.stdout[-2000:]}\n"
+        f"stderr (last 1000):\n{r.stderr[-1000:]}"
+    )
+
+    merged = out_dir / "generated_data.jsonl"
+    assert merged.exists(), f"merged output not written: stdout={r.stdout[-500:]}"
+    lines = [ln for ln in merged.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert len(lines) >= 10, f"expected ≥10 rows in merged output, got {len(lines)}"
+    row = json.loads(lines[0])
+    assert "messages" in row, f"row missing 'messages': {list(row.keys())}"
+    assert any(m.get("role") == "user" for m in row["messages"])
+    assert any(m.get("role") == "assistant" for m in row["messages"])
+
+
 # ── CLI validation tests (no live calls — pure argparse) ─────────────────
 
 @pytest.mark.parametrize("override,expect_in_output", [
@@ -632,6 +719,29 @@ def test_cli_help_renders():
                      "--max-samples", "--train-split", "--use-rest", "--download",
                      "--tools-from", "--tools-to-openapi-out"]:
         assert required in out, f"--help missing {required}"
+
+
+def test_auto_finetune_foundry_generate_requires_endpoint(tmp_path):
+    """auto_finetune.py foundry-generate must reject when --project-endpoint missing."""
+    auto_ft = os.path.join(os.path.dirname(__file__), "..", "scripts", "auto_finetune.py")
+    task_spec = tmp_path / "ts.json"
+    task_spec.write_text(json.dumps({"task_name": "t", "description": "d"}), encoding="utf-8")
+    # Clear env var that would otherwise satisfy --project-endpoint
+    env = {k: v for k, v in os.environ.items() if k != "AZURE_AI_PROJECT_ENDPOINT"}
+    r = subprocess.run(
+        [sys.executable, auto_ft, "foundry-generate",
+         "--task-spec", str(task_spec),
+         "--source", "prompt-inline",
+         "--teacher", "gpt-4.1-mini",
+         "--max-samples", "15"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=30, env=env,
+    )
+    assert r.returncode != 0
+    combined = r.stdout + r.stderr
+    assert "project-endpoint" in combined.lower(), (
+        f"expected project-endpoint error, got:\n{combined}"
+    )
 
 
 def test_cli_tools_to_openapi_conversion(tmp_path):

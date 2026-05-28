@@ -41,6 +41,11 @@ python scripts/auto_finetune.py analyze --data raw.csv --output task_spec.json
 # 2. Generate training data (if needed — uses teacher model)
 python scripts/auto_finetune.py generate --task-spec task_spec.json --num-examples 200
 
+# 2b. Alternative: pull data from the Foundry Data Generation API (traces, agent spec, OpenAPI tools, ...)
+#     See "Data sources: local teacher vs Foundry Data Generation API" below.
+python scripts/auto_finetune.py foundry-generate --task-spec task_spec.json \
+    --source traces --agent-name my-agent --hours 24 --max-samples 200
+
 # 3. Prepare (convert, filter, split into train/val/test)
 python scripts/auto_finetune.py prepare --task-spec task_spec.json --data raw.csv
 
@@ -105,6 +110,54 @@ python scripts/auto_finetune.py auto --data data.jsonl --tier globalStandard
 ```
 
 > **Note**: OSS models automatically override to `globalStandard` regardless of `--tier` setting.
+
+## Data sources: local teacher vs Foundry Data Generation API
+
+The `generate` phase (the second phase of the autopilot) has two backends:
+
+| Backend | Subcommand / flag | When to use |
+|---------|-------------------|-------------|
+| **Local teacher (default)** | `generate` / `--datagen-backend local` | Cold-start from a free-text description. Works without a Foundry project endpoint; has built-in quality scoring (`--min-quality`), difficulty mixing, and dedup against existing data. |
+| **Foundry Prompt** | `foundry-generate --source prompt-inline` / `--datagen-backend foundry-prompt` | Cold-start when the project has a strong teacher; uses the service's QA pair generation. |
+| **Foundry File** | `foundry-generate --source file` / `--datagen-backend foundry-file --datagen-file-id …` | You have a corpus already uploaded as `user_data` (typically when corpus is large or has been curated). |
+| **Foundry Agent** | `foundry-generate --source agent` / `--datagen-backend foundry-agent --datagen-agent-name …` | You have a deployed agent (with instructions/tools) but no traffic yet — bootstrap from the registered agent spec. |
+| **Foundry Traces** | `foundry-generate --source traces` / `--datagen-backend foundry-traces --datagen-agent-name … --datagen-hours …` | You have real production traffic flowing through a deployed agent. Best for distillation: target the actual queries your users send. |
+| **Tool-use SFT** (OpenAPI spec) | `foundry-generate --source file --recipe tool-use` | Tool-calling fine-tune. Upload an OpenAPI 3.0/3.1 spec as `user_data` first. See `workflows/synthetic-datagen.md`. |
+
+Use the local backend by default; switch to a Foundry backend when:
+- You want to ground generation in real production traces (`foundry-traces`)
+- You want tool-calling SFT data from an OpenAPI spec (`foundry-file --recipe tool-use`)
+- You want the service to handle quality control instead of the in-script scorer
+
+Direct invocation (any backend):
+
+```bash
+# Local teacher loop (default)
+python scripts/auto_finetune.py generate --task-spec task_spec.json --num-examples 200
+
+# Foundry Data Generation API
+python scripts/auto_finetune.py foundry-generate \
+  --task-spec task_spec.json \
+  --source traces --recipe traces --scenario sft \
+  --agent-name my-deployed-agent --agent-version 3 --hours 24 \
+  --max-samples 200 --project-endpoint $AZURE_AI_PROJECT_ENDPOINT
+```
+
+Autopilot with Foundry traces as the data source:
+
+```bash
+python scripts/auto_finetune.py auto \
+  --description "Distil retail-agent responses into gpt-4.1-nano" \
+  --model gpt-4.1-nano \
+  --datagen-backend foundry-traces \
+  --datagen-agent-name retail-agent --datagen-agent-version 3 \
+  --datagen-hours 168 \
+  --teacher gpt-4.1-mini \
+  --project-endpoint $AZURE_AI_PROJECT_ENDPOINT \
+  --work-dir ./distil_run
+```
+
+Both backends write `<output-dir>/generated_data.jsonl` in chat-SFT format, so the rest of the pipeline (`prepare`, `baseline`, `candidates`, …) is identical regardless of which one you pick. See `references/data-generation-api.md` for the full API surface and `workflows/synthetic-datagen.md` / `workflows/traces-to-dataset.md` for end-to-end walkthroughs.
 
 ## Artifacts
 

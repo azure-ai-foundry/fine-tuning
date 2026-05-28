@@ -207,7 +207,8 @@ class TestAutoFinetuneCLI:
 
     def test_all_subcommands_exist(self):
         """All expected subcommands should be available."""
-        expected = ["analyze", "generate", "prepare", "baseline", "candidates", "execute", "evaluate", "review", "auto"]
+        expected = ["analyze", "generate", "foundry-generate", "prepare", "baseline",
+                    "candidates", "execute", "evaluate", "review", "auto"]
         result = subprocess.run(
             [sys.executable, self.AUTO_FT, "--help"],
             capture_output=True, text=True, timeout=10,
@@ -215,6 +216,37 @@ class TestAutoFinetuneCLI:
         assert result.returncode == 0
         for cmd in expected:
             assert cmd in result.stdout, f"Subcommand '{cmd}' not found in help output"
+
+    def test_foundry_generate_subcommand_help(self):
+        """The 'foundry-generate' subcommand should expose Foundry datagen flags."""
+        result = subprocess.run(
+            [sys.executable, self.AUTO_FT, "foundry-generate", "--help"],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0
+        for flag in ["--task-spec", "--source", "--recipe", "--scenario",
+                     "--max-samples", "--train-split", "--teacher",
+                     "--prompt", "--prompt-file", "--file-id",
+                     "--agent-name", "--agent-version", "--hours",
+                     "--project-endpoint"]:
+            assert flag in result.stdout, f"foundry-generate missing flag {flag}"
+        # Source/recipe/scenario choices appear
+        assert "traces" in result.stdout and "tool-use" in result.stdout
+
+    def test_auto_includes_datagen_backend(self):
+        """`auto` subcommand should expose --datagen-backend selector for Foundry datagen."""
+        result = subprocess.run(
+            [sys.executable, self.AUTO_FT, "auto", "--help"],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0
+        for flag in ["--datagen-backend", "--datagen-file-id",
+                     "--datagen-agent-name", "--datagen-hours"]:
+            assert flag in result.stdout, f"auto missing {flag}"
+        # Backend choices
+        for choice in ["local", "foundry-prompt", "foundry-file",
+                       "foundry-agent", "foundry-traces"]:
+            assert choice in result.stdout, f"--datagen-backend choice {choice} missing"
 
     def test_analyze_accepts_connection_args(self):
         """The 'analyze' subcommand should accept connection args."""

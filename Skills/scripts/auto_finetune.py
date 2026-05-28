@@ -42,6 +42,7 @@ import os
 import random
 import sys
 import time
+import uuid
 
 # Fix Windows console encoding (cp1252 can't handle Unicode arrows/emoji)
 if sys.platform == "win32":
@@ -724,6 +725,146 @@ def cmd_generate(args):
     print(f"\n  Output: {output_path} ({len(merged)} total examples{', ' + str(len(chat_examples)) + ' new' if existing_examples else ''})")
     print(f"  Raw scores: {raw_path}")
     print(f"\n  Next: auto_finetune.py prepare --task-spec {args.task_spec} --data {output_path}")
+
+
+# ── Phase 2 alternative: FOUNDRY-GENERATE (Foundry Data Generation API) ──
+
+def cmd_foundry_generate(args):
+    """Generate training/eval data via the Foundry Data Generation API.
+
+    Alternative to `cmd_generate` (which runs a custom teacher loop locally).
+    Use this when:
+      - You want to generate from real agent traces (--source traces)
+      - You want tool-calling SFT data from an OpenAPI 3.0 spec (--source file
+        --recipe tool-use)
+      - You want an evaluation dataset (--scenario eval)
+      - You want the service to handle quality control instead of the in-script scorer
+
+    See workflows/synthetic-datagen.md and references/data-generation-api.md
+    for the full API.
+
+    Output is normalised to <output-dir>/generated_data.jsonl so the rest of
+    the auto_finetune pipeline (prepare/baseline/candidates/etc.) just works.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+
+    if not args.project_endpoint:
+        sys.exit("--project-endpoint required (or set AZURE_AI_PROJECT_ENDPOINT) for Foundry data generation")
+
+    with open(args.task_spec, encoding="utf-8") as f:
+        spec = json.load(f)
+
+    task_name = spec.get("task_name", "task")
+    description = spec.get("description", "")
+
+    output_dir = os.path.abspath(args.output_dir)
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Generate a short, unique output name (Foundry caps at 50 chars; needs [a-z0-9-])
+    run_id = uuid.uuid4().hex[:8]
+    short_task = "".join(c if c.isalnum() or c == "-" else "-" for c in task_name.lower())[:25].strip("-")
+    output_name = f"af-{short_task}-{run_id}"[:50]
+
+    script = os.path.join(os.path.dirname(__file__), "generate_dataset.py")
+    if not os.path.exists(script):
+        sys.exit(f"generate_dataset.py not found at {script}")
+
+    cmd = [
+        sys.executable, script,
+        "--project-endpoint", args.project_endpoint,
+        "--source", args.source,
+        "--recipe", args.recipe,
+        "--scenario", args.scenario,
+        "--max-samples", str(args.max_samples),
+        "--output-name", output_name,
+        "--download",
+    ]
+    if args.train_split is not None:
+        cmd += ["--train-split", str(args.train_split)]
+    if args.teacher:
+        cmd += ["--teacher", args.teacher]
+    if args.api_key:
+        # generate_dataset.py uses DefaultAzureCredential; --api-key is for OAI clients
+        pass
+
+    # Source-specific args (validated against generate_dataset.py's own argparse)
+    if args.source == "prompt-inline":
+        prompt = args.prompt or description
+        if not prompt:
+            sys.exit("--prompt or task spec 'description' required for --source prompt-inline")
+        cmd += ["--prompt", prompt[:10000]]  # service cap
+    elif args.source == "prompt-file":
+        if not args.prompt_file:
+            sys.exit("--prompt-file required for --source prompt-file")
+        cmd += ["--prompt-file", args.prompt_file]
+    elif args.source == "file":
+        if not args.file_id:
+            sys.exit("--file-id required for --source file (upload via openai.files.create first)")
+        cmd += ["--file-id", args.file_id]
+    elif args.source == "agent":
+        if not args.agent_name:
+            sys.exit("--agent-name required for --source agent")
+        cmd += ["--agent-name", args.agent_name]
+        if args.agent_version:
+            cmd += ["--agent-version", args.agent_version]
+    elif args.source == "traces":
+        if not args.agent_name:
+            sys.exit("--agent-name required for --source traces")
+        cmd += ["--agent-name", args.agent_name]
+        if args.agent_version:
+            cmd += ["--agent-version", args.agent_version]
+        if args.hours is not None:
+            cmd += ["--hours", str(args.hours)]
+
+    print(f"\n{'='*60}")
+    print(f"  FOUNDRY DATA GENERATION: {task_name}")
+    print(f"{'='*60}")
+    print(f"  Source:      {args.source}")
+    print(f"  Recipe:      {args.recipe}")
+    print(f"  Scenario:    {args.scenario}")
+    print(f"  Teacher:     {args.teacher or '(not required for traces)'}")
+    print(f"  Max samples: {args.max_samples}")
+    print(f"  Output name: {output_name}")
+    print(f"{'='*60}\n")
+
+    # Run from a temp cwd so --download lands in a known place, then merge
+    tmpdir = tempfile.mkdtemp(prefix="foundry-datagen-")
+    try:
+        result = subprocess.run(
+            cmd, cwd=tmpdir, capture_output=False, text=True,
+            encoding="utf-8", errors="replace",
+        )
+        if result.returncode != 0:
+            sys.exit(f"generate_dataset.py exited with {result.returncode}")
+
+        # Discover downloaded files
+        downloaded = sorted([
+            os.path.join(tmpdir, f) for f in os.listdir(tmpdir)
+            if f.endswith(".jsonl")
+        ])
+        if not downloaded:
+            sys.exit(f"No JSONL files downloaded to {tmpdir} — job may have produced 0 samples or a Dataset (EVAL) output")
+
+        # Merge train+valid (if both) into a single generated_data.jsonl
+        merged_path = os.path.join(output_dir, "generated_data.jsonl")
+        total = 0
+        with open(merged_path, "w", encoding="utf-8") as out:
+            for path in downloaded:
+                with open(path, encoding="utf-8") as src:
+                    for line in src:
+                        if line.strip():
+                            out.write(line.rstrip("\n") + "\n")
+                            total += 1
+                # Also copy the original file for inspection
+                shutil.copy2(path, os.path.join(output_dir, os.path.basename(path)))
+
+        print(f"\n  Merged {len(downloaded)} file(s) → {merged_path} ({total} examples)")
+        print(f"  Source files copied to {output_dir}")
+        print(f"\n  Next: auto_finetune.py prepare --task-spec {args.task_spec} --data {merged_path}")
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 def _build_generation_prompt(task_type, description, schema_text, target_count):
@@ -2559,22 +2700,52 @@ def cmd_auto(args):
     data_mode = spec.get("data_mode", "labeled")
 
     # ── Phase 2: GENERATE (if no data, unlabeled, or prompt-only) ──
-    if data_mode in ("unlabeled", "prompt_only"):
+    backend = getattr(args, "datagen_backend", "local")
+    needs_generate = data_mode in ("unlabeled", "prompt_only")
+    if needs_generate:
         print("\n\n" + "=" * 60)
         if data_mode == "prompt_only":
-            print("  PHASE 2: GENERATE (no data file — generating from description)")
+            print(f"  PHASE 2: GENERATE  [backend={backend}]")
+            print("  (no data file — generating from description)")
         else:
-            print("  PHASE 2: GENERATE (unlabeled data detected)")
+            print(f"  PHASE 2: GENERATE  [backend={backend}]")
+            print("  (unlabeled data detected)")
         print("=" * 60)
-        gen_args = argparse.Namespace(
-            task_spec=task_spec_path, num_examples=args.num_examples,
-            teacher=args.teacher, schema_file=args.schema_file,
-            min_quality=args.min_quality, difficulty="mixed",
-            existing_data=None, output_dir=generated_dir,
-            base_url=args.base_url, api_key=args.api_key,
-            project_endpoint=args.project_endpoint,
-        )
-        cmd_generate(gen_args)
+
+        if backend == "local":
+            gen_args = argparse.Namespace(
+                task_spec=task_spec_path, num_examples=args.num_examples,
+                teacher=args.teacher, schema_file=args.schema_file,
+                min_quality=args.min_quality, difficulty="mixed",
+                existing_data=None, output_dir=generated_dir,
+                base_url=args.base_url, api_key=args.api_key,
+                project_endpoint=args.project_endpoint,
+            )
+            cmd_generate(gen_args)
+        else:
+            # foundry-* backend → delegate to cmd_foundry_generate via task_spec
+            src_map = {
+                "foundry-prompt": ("prompt-inline", "qna"),
+                "foundry-file":   ("file",          "qna"),
+                "foundry-agent":  ("agent",         "qna"),
+                "foundry-traces": ("traces",        "traces"),
+            }
+            source, recipe = src_map[backend]
+            fg_args = argparse.Namespace(
+                task_spec=task_spec_path, source=source, recipe=recipe, scenario="sft",
+                max_samples=max(15, min(1000, args.num_examples)),
+                train_split=None,  # let prepare phase split
+                teacher=args.teacher,
+                prompt=None, prompt_file=None,
+                file_id=args.datagen_file_id,
+                agent_name=args.datagen_agent_name,
+                agent_version=args.datagen_agent_version,
+                hours=args.datagen_hours if source == "traces" else None,
+                output_dir=generated_dir,
+                base_url=args.base_url, api_key=args.api_key,
+                project_endpoint=args.project_endpoint,
+            )
+            cmd_foundry_generate(fg_args)
         data_path = os.path.join(generated_dir, "generated_data.jsonl")
     elif data_mode == "chat_sft":
         print("\n  Data is already in SFT chat format — skipping generation.")
@@ -2930,6 +3101,35 @@ def build_parser():
     p.add_argument("--output-dir", default="./generated")
     add_connection_args(p)
 
+    # foundry-generate (uses the Foundry Data Generation API instead of a local teacher loop)
+    p = sub.add_parser("foundry-generate",
+                       help="Generate data via the Foundry Data Generation API (traces / corpus / agent / OpenAPI spec → SFT or eval JSONL)")
+    p.add_argument("--task-spec", required=True)
+    p.add_argument("--source", required=True,
+                   choices=["traces", "prompt-inline", "prompt-file", "file", "agent"],
+                   help="Where Foundry pulls raw material from")
+    p.add_argument("--recipe", default="qna", choices=["traces", "qna", "tool-use"],
+                   help="Recipe to apply (default: qna)")
+    p.add_argument("--scenario", default="sft", choices=["sft", "eval"],
+                   help="What the data is for (default: sft). RFT requires Traces source — see workflows/traces-to-dataset.md.")
+    p.add_argument("--max-samples", type=int, default=100,
+                   help="Samples to produce (15-1000, enforced by service; default 100)")
+    p.add_argument("--train-split", type=float, default=0.8,
+                   help="Train/validation split for SFT (default 0.8). EVAL ignores this.")
+    p.add_argument("--teacher", default=None,
+                   help="Teacher model deployment name (required for qna/tool-use; not needed for traces)")
+    # Source-specific args
+    p.add_argument("--prompt", default=None,
+                   help="Inline prompt text for --source prompt-inline (default: task_spec.description)")
+    p.add_argument("--prompt-file", default=None, help="Path to a text file (for --source prompt-file)")
+    p.add_argument("--file-id", default=None,
+                   help="Pre-uploaded OpenAI file id (for --source file). For tool-use, the file MUST be an OpenAPI 3.0/3.1 spec.")
+    p.add_argument("--agent-name", default=None, help="Deployed agent name (for traces/agent sources)")
+    p.add_argument("--agent-version", default=None, help="Pin agent version (recommended for traces)")
+    p.add_argument("--hours", type=int, default=None, help="For traces: pull spans from last N hours")
+    p.add_argument("--output-dir", default="./generated")
+    add_connection_args(p)
+
     # prepare
     p = sub.add_parser("prepare", help="Convert, filter, and split data")
     p.add_argument("--task-spec", required=True)
@@ -3000,6 +3200,18 @@ def build_parser():
                    help="Training tier: developerTier (cheapest, spot), globalStandard (priority), "
                         "standard (data residency). Note: OSS models (qwen, llama, ministral, oss-20b) "
                         "only support globalStandard — other tiers are auto-overridden.")
+    p.add_argument("--datagen-backend", default="local",
+                   choices=["local", "foundry-prompt", "foundry-file", "foundry-agent", "foundry-traces"],
+                   help="Where the generate phase pulls data from. "
+                        "'local' (default) = in-process teacher loop. "
+                        "'foundry-prompt' = Foundry Data Generation API with task description as Prompt source. "
+                        "'foundry-file' = use --datagen-file-id (pre-uploaded corpus). "
+                        "'foundry-agent' = use --datagen-agent-name (deployed agent's instructions). "
+                        "'foundry-traces' = use --datagen-agent-name + --datagen-hours (real traffic).")
+    p.add_argument("--datagen-file-id", default=None, help="OpenAI file id for --datagen-backend foundry-file")
+    p.add_argument("--datagen-agent-name", default=None, help="Agent name for --datagen-backend foundry-agent or foundry-traces")
+    p.add_argument("--datagen-agent-version", default=None, help="Pin agent version for traces (recommended)")
+    p.add_argument("--datagen-hours", type=int, default=24, help="Hours of traces to pull (default 24)")
     add_connection_args(p)
 
     return parser
@@ -3016,6 +3228,7 @@ if __name__ == "__main__":
     commands = {
         "analyze": cmd_analyze,
         "generate": cmd_generate,
+        "foundry-generate": cmd_foundry_generate,
         "prepare": cmd_prepare,
         "baseline": cmd_baseline,
         "candidates": cmd_candidates,
