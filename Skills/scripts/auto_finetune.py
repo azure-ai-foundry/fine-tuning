@@ -932,14 +932,24 @@ def _normalize_for_ft(row: dict) -> int:
                 m["content"] = None
                 fixed += 1
 
-    # Sequence check: every assistant tool_call.id must appear as
-    # tool_call_id in a subsequent tool message before any other assistant turn.
+    # Sequence check: if an assistant message has tool_calls and is followed by
+    # MORE messages, then each tool_call.id must appear as tool_call_id in a
+    # subsequent tool message before the next non-tool turn. If the tool_call
+    # is the LAST message in the conversation (no follow-up), that's a valid
+    # SFT signal — the model is being trained to issue the call; what happens
+    # after is left to runtime. Drop only the truly truncated case.
     for i, m in enumerate(msgs):
         if m.get("role") != "assistant" or not m.get("tool_calls"):
             continue
         expected_ids = {tc.get("id") for tc in m["tool_calls"] if tc.get("id")}
+        if not expected_ids:
+            continue
+        following = msgs[i + 1:]
+        if not following:
+            # tool_call IS the final message — valid SFT row (model learns when to call)
+            continue
         seen_ids = set()
-        for fm in msgs[i + 1:]:
+        for fm in following:
             if fm.get("role") == "tool" and fm.get("tool_call_id"):
                 seen_ids.add(fm["tool_call_id"])
             elif fm.get("role") in ("assistant", "user", "system"):
