@@ -83,6 +83,7 @@ Reusable Python scripts in `scripts/`. Each is self-contained with inline docume
 | `validate/validate_dpo.py` | Validate DPO JSONL: schema, identical-pair detection, DPO epoch warnings |
 | `validate/validate_rft.py` | Validate RFT JSONL: schema, grader escaping warnings, content moderation risk |
 | `validate/data_stats.py` | Dataset stats: token counts, format detection, cost estimates per model family |
+| `content_safety_check.py` | **Debugging tool** — when Azure FT fails with "User data has failed data safety check", run this to identify which specific rows tripped the classifier. Uses Azure Content Safety API (Hate/Sexual/SelfHarm/Violence severity 0-7) and can write a `--drop-out` file with only passing rows. Not part of the normal flow; reach for it only when preprocessing rejects an otherwise-clean file. |
 
 **Always validate data before submitting jobs** — run `validate_sft.py` / `validate_dpo.py` / `validate_rft.py` first, then `data_stats.py` for the overview.
 
@@ -95,6 +96,7 @@ Reusable Python scripts in `scripts/`. Each is self-contained with inline docume
 | Task | Command |
 |------|---------|
 | Validate SFT data | `python scripts/validate/validate_sft.py data.jsonl` |
+| Triage `"User data has failed data safety check"` errors | `python scripts/content_safety_check.py --jsonl train.jsonl --endpoint https://<resource>.cognitiveservices.azure.com --api-key $env:AZURE_CONTENT_SAFETY_KEY --drop-out clean.jsonl` |
 | Generate dataset from agent traces | `python scripts/generate_dataset.py --source traces --agent-name <name> --agent-version <v> --recipe traces --scenario sft --max-samples 200 --train-split 0.8 --hours 24 --download` |
 | Generate Q&A from a doc | `python scripts/generate_dataset.py --source prompt-file --prompt-file policy.md --recipe qna --scenario sft --teacher gpt-4.1-mini --max-samples 100 --train-split 0.9 --download` |
 | Convert OpenAI tools to OpenAPI 3.0 (for tool-use) | `python scripts/generate_dataset.py --tools-from openai_tools.json --tools-to-openapi-out openapi.json` |
