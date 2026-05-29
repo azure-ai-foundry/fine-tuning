@@ -2278,58 +2278,19 @@ def cmd_evaluate(args):
 
 # ── Phase 7: REVIEW ──────────────────────────────────────────────────────
 
-# Model pricing ($/1M tokens) and median TTFT (seconds)
-MODEL_PRICING = {
-    "gpt-5.4": {"input": 2.50, "output": 15.00, "ttft": 181.2},
-    "gpt-5-4": {"input": 2.50, "output": 15.00, "ttft": 181.2},
-    "gpt-4.1-mini": {"input": 0.40, "output": 1.60, "ttft": 1.35},
-    "gpt-4.1-nano": {"input": 0.10, "output": 0.40, "ttft": 1.2},
-    "gpt-oss-20b": {"input": 0.30, "output": 0.60, "ttft": 2.0},
-    "Ministral-3B": {"input": 0.10, "output": 0.30, "ttft": 1.5},
-}
-
-# FT models inherit pricing from their base model
-def _get_model_pricing(model_id):
-    """Look up pricing for a model (handles FT model names like gpt-4.1-nano-2025-...ft-xxx)."""
-    for base, pricing in MODEL_PRICING.items():
-        if base in model_id:
-            return pricing
-    return None
-
-
-def _compute_cost_comparison(best_candidate, spec):
-    """Compare FT model cost/latency vs teacher (assume teacher is the largest model used for datagen)."""
-    ft_model = best_candidate.get("model_id", "")
-    ft_pricing = _get_model_pricing(ft_model)
-    
-    # Assume teacher is gpt-5.4 (most common for distillation)
-    teacher_pricing = MODEL_PRICING.get("gpt-5.4")
-    
-    if not ft_pricing or not teacher_pricing:
-        return None
-    
-    # Cost comparison (weighted: 60% input, 40% output as typical ratio)
-    ft_cost = ft_pricing["input"] * 0.6 + ft_pricing["output"] * 0.4
-    teacher_cost = teacher_pricing["input"] * 0.6 + teacher_pricing["output"] * 0.4
-    cost_savings = round(teacher_cost / ft_cost, 1) if ft_cost > 0 else 0
-    
-    # Latency comparison
-    latency_improvement = round(teacher_pricing["ttft"] / ft_pricing["ttft"], 0) if ft_pricing["ttft"] > 0 else 0
-    
-    # Quality comparison (FT score vs 10.0 as teacher ceiling)
-    ft_score = best_candidate.get("combined", best_candidate.get("score", 0))
-    quality_pct = round(ft_score / 10.0 * 100, 1)
-    
-    return {
-        "ft_model": ft_model,
-        "quality_pct": quality_pct,
-        "cost_savings": cost_savings,
-        "latency_improvement": int(latency_improvement),
-        "ft_input_cost": ft_pricing["input"],
-        "ft_output_cost": ft_pricing["output"],
-        "teacher_input_cost": teacher_pricing["input"],
-        "teacher_output_cost": teacher_pricing["output"],
-    }
+# NOTE: Earlier versions of this file shipped a hardcoded MODEL_PRICING dict
+# (per-model input/output $ and TTFT seconds) plus a _compute_cost_comparison
+# helper that printed "ROI vs Teacher: X% quality, Yx cheaper, Zx faster TTFT"
+# in the SHIP summary. Those numbers were FAKE:
+#   * MODEL_PRICING.ttft values were never measured anywhere — pure guesses
+#     (e.g. gpt-5.4 ttft=181.2s — wildly off from reality).
+#   * The "teacher" used for the comparison was hardcoded to gpt-5.4 regardless
+#     of which teacher was actually configured for datagen.
+#   * Pricing values would drift out of date with no warning.
+# Removed in commit <pending> to stop fabricating numbers. If you want a real
+# cost/latency comparison, measure it: run N inference calls against the FT
+# model and the teacher (or any reference model) on the same prompts and
+# record actual TTFT + token costs from the live Azure pricing page.
 
 
 def cmd_review(args):
@@ -2594,16 +2555,6 @@ def cmd_review(args):
         for i, r in enumerate(recommendations, 1):
             print(f"    {i}. {r}")
 
-    # Cost/latency comparison (if SHIP decision)
-    cost_comparison = None
-    if decision == "SHIP" and best.get("model_id"):
-        cost_comparison = _compute_cost_comparison(best, spec)
-        if cost_comparison:
-            print(f"\n  ROI vs Teacher ({spec.get('eval_rubric', {}).get('judge_model', 'gpt-5.4')}):")
-            print(f"    Quality:  {cost_comparison['quality_pct']}% of teacher")
-            print(f"    Cost:     {cost_comparison['cost_savings']}x cheaper")
-            print(f"    Latency:  {cost_comparison['latency_improvement']}x faster TTFT")
-
     # Get training example count from runs data
     train_examples = "?"
     if runs_data:
@@ -2627,7 +2578,6 @@ def cmd_review(args):
         "decision": decision,
         "candidate_diagnostics": diagnostics,
         "recommendations": recommendations,
-        "cost_comparison": cost_comparison,
         "train_examples": train_examples,
         "next_action": {
             "SHIP": "Deploy the winning model",
@@ -3211,14 +3161,6 @@ def _print_auto_summary(work_dir, iterations, final_review, baseline):
             best_close = close_calls[0]
             print(f"  Narrow hyperparameters around {best_close['candidate']} ({best_close['lift_pct']:+.1f}% lift)")
             print(f"     - Try: same config with more data, or lr +/- 0.2")
-
-    # Cost comparison (SHIP only)
-    cost = final_review.get("cost_comparison")
-    if cost:
-        print(f"\n  --- ROI vs Teacher ---")
-        print(f"  Quality:  {cost.get('quality_pct', '?')}% of teacher")
-        print(f"  Cost:     {cost.get('cost_savings', '?')}x cheaper")
-        print(f"  Latency:  {cost.get('latency_improvement', '?')}x faster TTFT")
 
     print(f"{'='*60}")
 
