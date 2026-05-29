@@ -847,24 +847,61 @@ def cmd_foundry_generate(args):
         if not downloaded:
             sys.exit(f"No JSONL files downloaded to {tmpdir} — job may have produced 0 samples or a Dataset (EVAL) output")
 
-        # Merge train+valid (if both) into a single generated_data.jsonl
+        # Merge train+valid (if both) into a single generated_data.jsonl, while
+        # normalising row-level quirks that the Foundry traces export produces and
+        # that Azure FT preprocessing rejects. Specifically:
+        #   - assistant messages with tool_calls sometimes have content="null"
+        #     (the string) — must be JSON null or empty string for FT preprocess
+        #     to accept the row.
+        # See bugs_found table (run=test_agent_run, FT preprocessing failed).
         merged_path = os.path.join(output_dir, "generated_data.jsonl")
         total = 0
+        normalised = 0
         with open(merged_path, "w", encoding="utf-8") as out:
             for path in downloaded:
                 with open(path, encoding="utf-8") as src:
                     for line in src:
-                        if line.strip():
+                        if not line.strip():
+                            continue
+                        try:
+                            row = json.loads(line)
+                            fixed_count = _normalize_for_ft(row)
+                            normalised += fixed_count
+                            out.write(json.dumps(row, ensure_ascii=False) + "\n")
+                        except json.JSONDecodeError:
                             out.write(line.rstrip("\n") + "\n")
-                            total += 1
-                # Also copy the original file for inspection
+                        total += 1
                 shutil.copy2(path, os.path.join(output_dir, os.path.basename(path)))
 
         print(f"\n  Merged {len(downloaded)} file(s) → {merged_path} ({total} examples)")
+        if normalised:
+            print(f"  Normalised {normalised} messages (e.g. content='null' → null) for FT compatibility")
         print(f"  Source files copied to {output_dir}")
         print(f"\n  Next: auto_finetune.py prepare --task-spec {args.task_spec} --data {merged_path}")
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def _normalize_for_ft(row: dict) -> int:
+    """Normalise a single chat-SFT row for Azure FT preprocessing acceptance.
+
+    Returns the number of messages fixed. Currently fixes:
+      - assistant messages with tool_calls that have `content: "null"` (string).
+        Azure FT rejects these rows. Convert to actual None.
+      - assistant tool_call rows where content is some other non-string but
+        tool_calls are present — drop content (set to None) so it's unambiguous.
+    """
+    fixed = 0
+    for m in row.get("messages", []):
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            c = m.get("content")
+            # The literal string "null" — most common bug from traces export
+            if c == "null":
+                m["content"] = None
+                fixed += 1
+            # Empty-string content with tool_calls is fine but inconsistent;
+            # leave as-is to avoid behavioural surprises.
+    return fixed
 
 
 def _build_generation_prompt(task_type, description, schema_text, target_count):
@@ -2279,7 +2316,21 @@ def cmd_review(args):
 
     candidates = lb.get("candidates", [])
     if not candidates:
-        print(f"\n  No candidates to review.")
+        print(f"\n  No candidates to review (all training/eval failed).")
+        # Always write a review file so cmd_auto can keep going. Decision = STOP.
+        review = {
+            "iteration": lb.get("iteration", 1),
+            "best": None,
+            "lift_pct": 0.0,
+            "decision": "STOP",
+            "reason": "no_candidates",
+            "rationale": "All candidate training or evaluation runs failed; nothing to compare to baseline. Inspect runs_iter*.json for per-job error messages.",
+            "baselines": model_baselines,
+            "diagnostics": [],
+        }
+        with open(args.output, "w", encoding="utf-8") as f:
+            json.dump(review, f, indent=2)
+        print(f"  Output: {args.output}")
         return
 
     best = candidates[0]
