@@ -118,24 +118,33 @@ The `generate` phase (the second phase of the autopilot) has two backends:
 | Backend | Subcommand / flag | When to use |
 |---------|-------------------|-------------|
 | **Local teacher (default)** | `generate` / `--datagen-backend local` | Cold-start from a free-text description. Works without a Foundry project endpoint; has built-in quality scoring (`--min-quality`), difficulty mixing, and dedup against existing data. |
-| **Foundry Prompt** | `foundry-generate --source prompt-inline` / `--datagen-backend foundry-prompt` | Cold-start when the project has a strong teacher; uses the service's QA pair generation. |
+| **Foundry Prompt** | `foundry-generate --source prompt-inline` / `--datagen-backend foundry-prompt` | Cold-start when the project has a strong teacher; uses the service's QA pair generation. (Implementation note: the autopilot routes this through `prompt-file` internally — uploads description as `user_data` — to avoid a known service-side fast-fail on inline Prompt+SFT on some projects.) |
 | **Foundry File** | `foundry-generate --source file` / `--datagen-backend foundry-file --datagen-file-id …` | You have a corpus already uploaded as `user_data` (typically when corpus is large or has been curated). |
 | **Foundry Agent** | `foundry-generate --source agent` / `--datagen-backend foundry-agent --datagen-agent-name …` | You have a deployed agent (with instructions/tools) but no traffic yet — bootstrap from the registered agent spec. |
 | **Foundry Traces** | `foundry-generate --source traces` / `--datagen-backend foundry-traces --datagen-agent-name … --datagen-hours …` | You have real production traffic flowing through a deployed agent. Best for distillation: target the actual queries your users send. |
 | **Tool-use SFT** (OpenAPI spec) | `foundry-generate --source file --recipe tool-use` | Tool-calling fine-tune. Upload an OpenAPI 3.0/3.1 spec as `user_data` first. See `workflows/synthetic-datagen.md`. |
 
-Use the local backend by default; switch to a Foundry backend when:
-- You want to ground generation in real production traces (`foundry-traces`)
-- You want tool-calling SFT data from an OpenAPI spec (`foundry-file --recipe tool-use`)
-- You want the service to handle quality control instead of the in-script scorer
+### Who picks the backend — user or agent?
 
-Direct invocation (any backend):
+`--datagen-backend` defaults to **`auto`** — the autopilot infers the backend from the companion flags you pass, in this order:
+
+| If you pass… | Inferred backend |
+|---|---|
+| `--datagen-file-id <id>` | `foundry-file` |
+| `--datagen-agent-name <name>` + `--datagen-hours <n>` | `foundry-traces` |
+| `--datagen-agent-name <name>` (no hours) | `foundry-agent` |
+| `--project-endpoint <url>` (and nothing more specific) | `foundry-prompt` |
+| (none of the above) | `local` |
+
+Pass an explicit `--datagen-backend local|foundry-prompt|foundry-file|foundry-agent|foundry-traces` to override inference. The autopilot prints the chosen backend in Phase 2 so you can see how the inference resolved.
+
+### Direct invocation (any backend)
 
 ```bash
 # Local teacher loop (default)
 python scripts/auto_finetune.py generate --task-spec task_spec.json --num-examples 200
 
-# Foundry Data Generation API
+# Foundry Data Generation API (explicit subcommand)
 python scripts/auto_finetune.py foundry-generate \
   --task-spec task_spec.json \
   --source traces --recipe traces --scenario sft \
@@ -143,21 +152,33 @@ python scripts/auto_finetune.py foundry-generate \
   --max-samples 200 --project-endpoint $AZURE_AI_PROJECT_ENDPOINT
 ```
 
-Autopilot with Foundry traces as the data source:
+### Autopilot with backend inference
+
+Just pass the relevant flags — the backend resolves automatically:
 
 ```bash
+# Inferred → foundry-traces (because --datagen-agent-name + --datagen-hours)
 python scripts/auto_finetune.py auto \
   --description "Distil retail-agent responses into gpt-4.1-nano" \
   --model gpt-4.1-nano \
-  --datagen-backend foundry-traces \
   --datagen-agent-name retail-agent --datagen-agent-version 3 \
   --datagen-hours 168 \
   --teacher gpt-4.1-mini \
   --project-endpoint $AZURE_AI_PROJECT_ENDPOINT \
   --work-dir ./distil_run
+
+# Inferred → foundry-file (because --datagen-file-id)
+python scripts/auto_finetune.py auto \
+  --description "Q&A from internal HR policy" \
+  --datagen-file-id file-abc123 \
+  --project-endpoint $AZURE_AI_PROJECT_ENDPOINT \
+  ...
+
+# Inferred → local (no datagen-* flags)
+python scripts/auto_finetune.py auto --description "Classify tickets" --model gpt-4.1-mini
 ```
 
-Both backends write `<output-dir>/generated_data.jsonl` in chat-SFT format, so the rest of the pipeline (`prepare`, `baseline`, `candidates`, …) is identical regardless of which one you pick. See `references/data-generation-api.md` for the full API surface and `workflows/synthetic-datagen.md` / `workflows/traces-to-dataset.md` for end-to-end walkthroughs.
+Both backends write `<output-dir>/generated_data.jsonl` in chat-SFT format, so the rest of the pipeline (`prepare`, `baseline`, `candidates`, …) is identical regardless of which one runs. See `references/data-generation-api.md` for the full API surface (including the **error table** with known service-level constraints and workarounds) and `workflows/synthetic-datagen.md` / `workflows/traces-to-dataset.md` for end-to-end walkthroughs.
 
 ## Artifacts
 

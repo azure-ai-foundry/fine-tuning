@@ -2645,6 +2645,38 @@ def _print_eval_results(label, model, results):
 
 # ── Phase AUTO: Full autopilot loop ──────────────────────────────────────
 
+def _infer_datagen_backend(args) -> str:
+    """Pick the datagen backend from the user's flags.
+
+    Resolution order:
+      1. Explicit `--datagen-backend X` (anything other than 'auto') wins.
+      2. Otherwise infer from companion flags:
+         - --datagen-file-id set                            → foundry-file
+         - --datagen-agent-name + --datagen-hours set       → foundry-traces
+         - --datagen-agent-name set (no hours)              → foundry-agent
+         - --project-endpoint set + nothing more specific   → foundry-prompt
+         - Nothing set                                      → local
+      3. Print the chosen backend so users know how the inference resolved.
+    """
+    explicit = getattr(args, "datagen_backend", "auto")
+    if explicit and explicit != "auto":
+        return explicit
+
+    if getattr(args, "datagen_file_id", None):
+        chosen, why = "foundry-file", "--datagen-file-id set"
+    elif getattr(args, "datagen_agent_name", None) and getattr(args, "datagen_hours", None):
+        chosen, why = "foundry-traces", "--datagen-agent-name + --datagen-hours set"
+    elif getattr(args, "datagen_agent_name", None):
+        chosen, why = "foundry-agent", "--datagen-agent-name set (no --datagen-hours)"
+    elif getattr(args, "project_endpoint", None):
+        chosen, why = "foundry-prompt", "--project-endpoint set, no other datagen-* hints"
+    else:
+        chosen, why = "local", "no datagen-* flags or --project-endpoint"
+
+    print(f"  Datagen backend inferred: {chosen}  ({why})")
+    return chosen
+
+
 def cmd_auto(args):
     """Run the full fine-tuning loop: analyze → prepare → baseline → candidates → execute → evaluate → review → iterate."""
     import argparse
@@ -2700,7 +2732,7 @@ def cmd_auto(args):
     data_mode = spec.get("data_mode", "labeled")
 
     # ── Phase 2: GENERATE (if no data, unlabeled, or prompt-only) ──
-    backend = getattr(args, "datagen_backend", "local")
+    backend = _infer_datagen_backend(args)
     needs_generate = data_mode in ("unlabeled", "prompt_only")
     if needs_generate:
         print("\n\n" + "=" * 60)
@@ -2724,23 +2756,35 @@ def cmd_auto(args):
             cmd_generate(gen_args)
         else:
             # foundry-* backend → delegate to cmd_foundry_generate via task_spec
+            # NOTE: prompt-inline + qna + SFT has been observed to fail fast on some
+            # projects (see references/data-generation-api.md error table). We default
+            # to prompt-file when there's no agent/file-id input so the prompt is
+            # uploaded as a user_data file under the hood (workaround for that bug).
             src_map = {
-                "foundry-prompt": ("prompt-inline", "qna"),
+                "foundry-prompt": ("prompt-file",   "qna"),     # prompt-file ⇒ uploads as File internally
                 "foundry-file":   ("file",          "qna"),
                 "foundry-agent":  ("agent",         "qna"),
                 "foundry-traces": ("traces",        "traces"),
             }
             source, recipe = src_map[backend]
+            prompt_file_for_foundry = None
+            if source == "prompt-file":
+                # Write spec.description to a temp file so generate_dataset.py can
+                # upload it as user_data. Caller-visible artifact lives in work-dir.
+                prompt_file_for_foundry = os.path.join(work_dir, "prompt_for_foundry.md")
+                with open(prompt_file_for_foundry, "w", encoding="utf-8") as _pf:
+                    _pf.write(spec.get("description", ""))
             fg_args = argparse.Namespace(
                 task_spec=task_spec_path, source=source, recipe=recipe, scenario="sft",
                 max_samples=max(15, min(1000, args.num_examples)),
                 train_split=None,  # let prepare phase split
                 teacher=args.teacher,
-                prompt=None, prompt_file=None,
+                prompt=None,
+                prompt_file=prompt_file_for_foundry,
                 file_id=args.datagen_file_id,
                 agent_name=args.datagen_agent_name,
                 agent_version=args.datagen_agent_version,
-                hours=args.datagen_hours if source == "traces" else None,
+                hours=(args.datagen_hours or 24) if source == "traces" else None,
                 output_dir=generated_dir,
                 base_url=args.base_url, api_key=args.api_key,
                 project_endpoint=args.project_endpoint,
@@ -3200,18 +3244,24 @@ def build_parser():
                    help="Training tier: developerTier (cheapest, spot), globalStandard (priority), "
                         "standard (data residency). Note: OSS models (qwen, llama, ministral, oss-20b) "
                         "only support globalStandard — other tiers are auto-overridden.")
-    p.add_argument("--datagen-backend", default="local",
-                   choices=["local", "foundry-prompt", "foundry-file", "foundry-agent", "foundry-traces"],
-                   help="Where the generate phase pulls data from. "
-                        "'local' (default) = in-process teacher loop. "
-                        "'foundry-prompt' = Foundry Data Generation API with task description as Prompt source. "
-                        "'foundry-file' = use --datagen-file-id (pre-uploaded corpus). "
-                        "'foundry-agent' = use --datagen-agent-name (deployed agent's instructions). "
-                        "'foundry-traces' = use --datagen-agent-name + --datagen-hours (real traffic).")
+    p.add_argument("--datagen-backend", default="auto",
+                   choices=["auto", "local", "foundry-prompt", "foundry-file",
+                            "foundry-agent", "foundry-traces"],
+                   help="Where Phase 2 (GENERATE) pulls data from. "
+                        "'auto' (default) infers from companion flags: "
+                        "--datagen-file-id → foundry-file; "
+                        "--datagen-agent-name + --datagen-hours → foundry-traces; "
+                        "--datagen-agent-name alone → foundry-agent; "
+                        "--project-endpoint alone → foundry-prompt; "
+                        "nothing → local. "
+                        "Pass an explicit choice to override inference. "
+                        "'local' = in-process teacher loop (no project endpoint required); "
+                        "'foundry-*' = Foundry Data Generation API.")
     p.add_argument("--datagen-file-id", default=None, help="OpenAI file id for --datagen-backend foundry-file")
     p.add_argument("--datagen-agent-name", default=None, help="Agent name for --datagen-backend foundry-agent or foundry-traces")
     p.add_argument("--datagen-agent-version", default=None, help="Pin agent version for traces (recommended)")
-    p.add_argument("--datagen-hours", type=int, default=24, help="Hours of traces to pull (default 24)")
+    p.add_argument("--datagen-hours", type=int, default=None,
+                   help="Hours of traces to pull (default: 24 when foundry-traces backend is selected, unset otherwise — presence of this flag is one of the inference signals for backend=foundry-traces)")
     add_connection_args(p)
 
     return parser

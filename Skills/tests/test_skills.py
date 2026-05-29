@@ -243,8 +243,8 @@ class TestAutoFinetuneCLI:
         for flag in ["--datagen-backend", "--datagen-file-id",
                      "--datagen-agent-name", "--datagen-hours"]:
             assert flag in result.stdout, f"auto missing {flag}"
-        # Backend choices
-        for choice in ["local", "foundry-prompt", "foundry-file",
+        # Backend choices (including 'auto' for inference)
+        for choice in ["auto", "local", "foundry-prompt", "foundry-file",
                        "foundry-agent", "foundry-traces"]:
             assert choice in result.stdout, f"--datagen-backend choice {choice} missing"
 
@@ -257,6 +257,67 @@ class TestAutoFinetuneCLI:
         assert result.returncode == 0
         assert "--base-url" in result.stdout
         assert "--api-key" in result.stdout
+
+
+# ── Datagen backend inference ────────────────────────────────────────────
+
+class TestDatagenBackendInference:
+    """Unit tests for _infer_datagen_backend — used by `auto_finetune.py auto` when
+    --datagen-backend is left at default ('auto')."""
+
+    @pytest.fixture(autouse=True)
+    def _add_scripts_to_path(self):
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        yield
+        try:
+            sys.path.remove(str(SCRIPTS_DIR))
+        except ValueError:
+            pass
+
+    def _ns(self, **kw):
+        """Build a Namespace with the flags we care about (all default None)."""
+        import argparse
+        defaults = dict(
+            datagen_backend="auto", datagen_file_id=None, datagen_agent_name=None,
+            datagen_hours=None, project_endpoint=None,
+        )
+        defaults.update(kw)
+        return argparse.Namespace(**defaults)
+
+    def test_explicit_backend_wins_over_inference(self, capsys):
+        from auto_finetune import _infer_datagen_backend
+        # Explicit local even though file-id would have inferred foundry-file
+        ns = self._ns(datagen_backend="local", datagen_file_id="file-abc")
+        assert _infer_datagen_backend(ns) == "local"
+
+    def test_file_id_infers_foundry_file(self):
+        from auto_finetune import _infer_datagen_backend
+        assert _infer_datagen_backend(self._ns(datagen_file_id="file-abc")) == "foundry-file"
+
+    def test_agent_name_plus_hours_infers_foundry_traces(self):
+        from auto_finetune import _infer_datagen_backend
+        ns = self._ns(datagen_agent_name="retail-agent", datagen_hours=24)
+        assert _infer_datagen_backend(ns) == "foundry-traces"
+
+    def test_agent_name_alone_infers_foundry_agent(self):
+        from auto_finetune import _infer_datagen_backend
+        ns = self._ns(datagen_agent_name="retail-agent")
+        assert _infer_datagen_backend(ns) == "foundry-agent"
+
+    def test_project_endpoint_alone_infers_foundry_prompt(self):
+        from auto_finetune import _infer_datagen_backend
+        ns = self._ns(project_endpoint="https://x.services.ai.azure.com/api/projects/p")
+        assert _infer_datagen_backend(ns) == "foundry-prompt"
+
+    def test_nothing_set_defaults_to_local(self):
+        from auto_finetune import _infer_datagen_backend
+        assert _infer_datagen_backend(self._ns()) == "local"
+
+    def test_file_id_beats_agent_name(self):
+        from auto_finetune import _infer_datagen_backend
+        # File-id is most specific → wins over agent-name
+        ns = self._ns(datagen_file_id="file-abc", datagen_agent_name="agent")
+        assert _infer_datagen_backend(ns) == "foundry-file"
 
 
 # ── Cost Estimation ──────────────────────────────────────────────────────
