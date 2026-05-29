@@ -40,6 +40,7 @@ import hashlib
 import json
 import os
 import random
+import requests
 import sys
 import time
 import uuid
@@ -1706,56 +1707,67 @@ def cmd_execute(args):
         tier = _resolve_tier(c["model"], requested_tier)
 
         try:
-            if tier and tier != "standard":
-                # Use REST API to set trainingType (SDK doesn't support it)
-                import requests
-                api_key = args.api_key or os.environ.get("AZURE_OPENAI_API_KEY")
-                base = args.base_url or os.environ.get("OPENAI_BASE_URL", "")
-                if not base or not api_key:
-                    print(f"  ⚠️  Tier '{tier}' requires REST API (--base-url + --api-key). "
-                          f"Falling back to SDK with 'standard' tier.")
-                    tier = None  # fall through to SDK path below
+            # SDK supports trainingType via extra_body. No REST fallback needed for tiers.
+            # (REST fallback is still used for OSS models that error out with
+            #  "does not support fine-tuning with Standard TrainingType".)
+            create_kwargs = dict(
+                model=c["model"],
+                training_file=train_upload.id,
+                validation_file=val_upload.id,
+                suffix=suffix,
+                method={"type": "supervised"},
+                hyperparameters={
+                    "n_epochs": c["epochs"],
+                    "learning_rate_multiplier": c["lr"],
+                },
+            )
+            if tier:
+                create_kwargs["extra_body"] = {"trainingType": tier}
 
-            if tier and tier != "standard":
-                # Strip /v1 suffix to get the raw endpoint
-                rest_endpoint = base.replace("/openai/v1", "").rstrip("/")
-                rest_url = f"{rest_endpoint}/openai/fine_tuning/jobs?api-version=2025-04-01-preview"
+            try:
+                job = client.fine_tuning.jobs.create(**create_kwargs)
+            except Exception as sdk_err:
+                msg = str(sdk_err)
+                if "does not support fine-tuning with Standard TrainingType" in msg or \
+                   ("training type" in msg.lower() and ("standard" in msg.lower() or "unsupported" in msg.lower())):
+                    # OSS model — needs explicit REST path
+                    api_key = args.api_key or os.environ.get("AZURE_OPENAI_API_KEY")
+                    base = args.base_url or os.environ.get("OPENAI_BASE_URL", "")
+                    if not base or not api_key:
+                        raise RuntimeError(
+                            f"Model '{c['model']}' rejected tier '{tier}' via SDK and REST fallback "
+                            f"is unavailable (need --base-url + --api-key). Original error: {sdk_err}"
+                        ) from sdk_err
+                    print(f"  ↩ SDK rejected for {c['model']}; retrying via REST with tier={tier}")
+                    rest_endpoint = base.replace("/openai/v1", "").rstrip("/")
+                    rest_url = f"{rest_endpoint}/openai/fine_tuning/jobs?api-version=2025-04-01-preview"
+                    body = {
+                        "model": c["model"],
+                        "training_file": train_upload.id,
+                        "validation_file": val_upload.id,
+                        "suffix": suffix,
+                        "hyperparameters": {
+                            "n_epochs": c["epochs"],
+                            "learning_rate_multiplier": c["lr"],
+                        },
+                        "trainingType": tier or "globalStandard",
+                    }
+                    resp = requests.post(rest_url, headers={"api-key": api_key, "Content-Type": "application/json"}, json=body, timeout=(10, 120))
+                    if resp.status_code not in (200, 201):
+                        try:
+                            err_msg = resp.json().get("error", {}).get("message", "Unknown error")
+                        except (ValueError, KeyError):
+                            err_msg = resp.text[:200] if resp.text else "Unknown error"
+                        raise RuntimeError(f"REST submission failed ({resp.status_code}): {err_msg}")
+                    data = resp.json()
+                    class _RESTJob:  # tiny shim
+                        def __init__(self, d): self.id = d["id"]; self.status = d.get("status", "pending")
+                    job = _RESTJob(data)
+                else:
+                    raise
 
-                body = {
-                    "model": c["model"],
-                    "training_file": train_upload.id,
-                    "validation_file": val_upload.id,
-                    "suffix": suffix,
-                    "hyperparameters": {
-                        "n_epochs": c["epochs"],
-                        "learning_rate_multiplier": c["lr"],
-                    },
-                    "trainingType": tier,
-                }
-                resp = requests.post(rest_url, headers={"api-key": api_key, "Content-Type": "application/json"}, json=body, timeout=(10, 120))
-                if resp.status_code not in (200, 201):
-                    try:
-                        err_msg = resp.json().get("error", {}).get("message", "Unknown error")
-                    except (ValueError, KeyError):
-                        err_msg = resp.text[:200] if resp.text else "Unknown error"
-                    raise RuntimeError(f"REST submission failed ({resp.status_code}): {err_msg}")
-                data = resp.json()
-                job_id = data["id"]
-                job_status = data.get("status", "pending")
-            else:
-                job = client.fine_tuning.jobs.create(
-                    model=c["model"],
-                    training_file=train_upload.id,
-                    validation_file=val_upload.id,
-                    suffix=suffix,
-                    method={"type": "supervised"},
-                    hyperparameters={
-                        "n_epochs": c["epochs"],
-                        "learning_rate_multiplier": c["lr"],
-                    },
-                )
-                job_id = job.id
-                job_status = job.status
+            job_id = job.id
+            job_status = job.status
 
             run = {
                 "candidate": c["name"],
@@ -1765,7 +1777,7 @@ def cmd_execute(args):
                 "hyperparameters": {"n_epochs": c["epochs"], "lr": c["lr"]},
                 "dataset_hash": _hash_file(train_path),
                 "fine_tuned_model": None,
-                "tier": tier or "standard",
+                "tier": tier or "service-default",
             }
             runs.append(run)
             tier_label = f" [{tier}]" if tier else ""
@@ -3288,9 +3300,12 @@ def build_parser():
     p = sub.add_parser("execute", help="Submit and monitor all candidates")
     p.add_argument("--plan", required=True)
     p.add_argument("--output", default="runs.json")
-    p.add_argument("--tier", default=None,
-                   choices=["developerTier", "globalStandard", "standard"],
-                   help="Training tier (overrides plan). OSS models auto-override to globalStandard.")
+    p.add_argument("--tier", default="globalStandard",
+                   choices=["globalStandard", "developerTier", "standard"],
+                   help="Training tier (overrides plan). Default 'globalStandard' works in all regions. "
+                        "'developerTier' is cheapest but capacity-limited. 'standard' is region-restricted "
+                        "and absent in many regions — only use if you specifically need data residency. "
+                        "OSS models auto-override to 'globalStandard'.")
     add_connection_args(p)
 
     # evaluate
@@ -3325,11 +3340,13 @@ def build_parser():
     p.add_argument("--schema-file", default=None, help="Schema/context file for domain-aware generation")
     p.add_argument("--min-quality", type=float, default=7.0, help="Min quality score for generated data")
     p.add_argument("--capacity", type=int, default=100, help="Deployment capacity for eval")
-    p.add_argument("--tier", default="developerTier",
-                   choices=["developerTier", "globalStandard", "standard"],
-                   help="Training tier: developerTier (cheapest, spot), globalStandard (priority), "
-                        "standard (data residency). Note: OSS models (qwen, llama, ministral, oss-20b) "
-                        "only support globalStandard — other tiers are auto-overridden.")
+    p.add_argument("--tier", default="globalStandard",
+                   choices=["globalStandard", "developerTier", "standard"],
+                   help="Training tier: 'globalStandard' (default; works in all regions) — recommended. "
+                        "'developerTier' (cheapest, spot — may be capacity-limited). "
+                        "'standard' (region-restricted; absent in many regions — use only for data residency). "
+                        "OSS models (qwen, llama, ministral, oss-20b) auto-override to globalStandard. "
+                        "Tier is sent via extra_body to the SDK, body parameter to REST.")
     p.add_argument("--datagen-backend", default="auto",
                    choices=["auto", "local", "foundry-prompt", "foundry-file",
                             "foundry-agent", "foundry-traces"],

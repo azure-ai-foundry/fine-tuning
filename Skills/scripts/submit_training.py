@@ -36,8 +36,16 @@ from common import HelpOnErrorParser, get_clients, upload_file
 import requests
 
 
-def submit_sft_sdk(client, model, train_id, val_id, epochs=2, lr=1.0, batch_size=None, suffix=None):
-    """Submit SFT job using the Python SDK."""
+def submit_sft_sdk(client, model, train_id, val_id, epochs=2, lr=1.0, batch_size=None, suffix=None, tier=None):
+    """Submit SFT job using the Python SDK.
+
+    `tier` must be one of: 'globalStandard', 'developerTier', or None to let the
+    service pick its default. Note: many regions do NOT support 'standard';
+    pass an explicit tier (recommended: globalStandard) to avoid 'unsupported
+    training type' errors. The tier is passed via `extra_body` since the OpenAI
+    SDK doesn't have a first-class `trainingType` parameter — Azure reads it
+    from the request body.
+    """
     hp = {"n_epochs": epochs, "learning_rate_multiplier": lr}
     if batch_size:
         hp["batch_size"] = batch_size
@@ -51,12 +59,16 @@ def submit_sft_sdk(client, model, train_id, val_id, epochs=2, lr=1.0, batch_size
     )
     if suffix:
         kwargs["suffix"] = suffix
+    if tier:
+        # OpenAI SDK doesn't model trainingType — send via extra_body so the
+        # Azure backend sees it as a top-level field.
+        kwargs["extra_body"] = {"trainingType": tier}
 
     job = client.fine_tuning.jobs.create(**kwargs)
-    return {"id": job.id, "status": job.status, "model": model, "method": "sdk"}
+    return {"id": job.id, "status": job.status, "model": model, "method": "sdk", "tier": tier}
 
 
-def submit_sft_rest(endpoint, api_key, model, train_id, val_id, epochs=2, lr=1.0, batch_size=None, suffix=None):
+def submit_sft_rest(endpoint, api_key, model, train_id, val_id, epochs=2, lr=1.0, batch_size=None, suffix=None, tier="globalStandard"):
     """Submit SFT job via REST API (fallback for models like gpt-oss-20b)."""
     url = f"{endpoint}/openai/fine_tuning/jobs?api-version=2025-04-01-preview"
     body = {
@@ -65,7 +77,7 @@ def submit_sft_rest(endpoint, api_key, model, train_id, val_id, epochs=2, lr=1.0
         "validation_file": val_id,
         "method": {"type": "supervised"},
         "hyperparameters": {"n_epochs": epochs, "learning_rate_multiplier": lr},
-        "trainingType": "globalStandard",
+        "trainingType": tier,
     }
     if batch_size:
         body["hyperparameters"]["batch_size"] = batch_size
@@ -172,6 +184,15 @@ def main():
     parser.add_argument("--use-rest", action="store_true",
                         help="Force REST API (needed for gpt-oss-20b)")
 
+    # Training tier
+    parser.add_argument("--tier", default="globalStandard",
+                        choices=["globalStandard", "developerTier", "standard"],
+                        help="Training tier. 'globalStandard' (default) works in all regions; "
+                             "'developerTier' is cheapest but capacity-limited; 'standard' is "
+                             "region-restricted and absent in many regions — prefer globalStandard "
+                             "unless you specifically need data residency. Sent via extra_body "
+                             "for the SDK, body parameter for REST.")
+
     args = parser.parse_args()
 
     client, method = get_clients(
@@ -207,20 +228,25 @@ def main():
             print("Error: --use-rest requires --endpoint and --api-key (REST does not support DefaultAzureCredential)")
             sys.exit(1)
         result = submit_sft_rest(args.endpoint, args.api_key, args.model,
-                                 train_id, val_id, args.epochs, args.lr, args.batch_size, args.suffix)
+                                 train_id, val_id, args.epochs, args.lr, args.batch_size, args.suffix,
+                                 tier=args.tier)
     else:
         # SFT via SDK with REST fallback for OSS models
         try:
             result = submit_sft_sdk(client, args.model, train_id, val_id,
-                                    args.epochs, args.lr, args.batch_size, args.suffix)
+                                    args.epochs, args.lr, args.batch_size, args.suffix,
+                                    tier=args.tier)
         except Exception as e:
-            if "does not support fine-tuning with Standard TrainingType" in str(e):
+            msg = str(e)
+            if "does not support fine-tuning with Standard TrainingType" in msg or \
+               "training type" in msg.lower() and "standard" in msg.lower():
                 if not args.endpoint or not args.api_key:
-                    print(f"SDK failed for {args.model}. REST fallback requires --endpoint and --api-key.")
+                    print(f"SDK failed for {args.model} (training-type rejection). REST fallback requires --endpoint and --api-key.")
                     sys.exit(1)
-                print(f"SDK failed for {args.model}, falling back to REST API...")
+                print(f"SDK failed for {args.model}, falling back to REST API with tier={args.tier}...")
                 result = submit_sft_rest(args.endpoint, args.api_key, args.model,
-                                         train_id, val_id, args.epochs, args.lr, args.batch_size, args.suffix)
+                                         train_id, val_id, args.epochs, args.lr, args.batch_size, args.suffix,
+                                         tier=args.tier)
             else:
                 raise
 
