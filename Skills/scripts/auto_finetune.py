@@ -857,6 +857,7 @@ def cmd_foundry_generate(args):
         merged_path = os.path.join(output_dir, "generated_data.jsonl")
         total = 0
         normalised = 0
+        dropped_malformed = 0
         with open(merged_path, "w", encoding="utf-8") as out:
             for path in downloaded:
                 with open(path, encoding="utf-8") as src:
@@ -866,16 +867,24 @@ def cmd_foundry_generate(args):
                         try:
                             row = json.loads(line)
                             fixed_count = _normalize_for_ft(row)
+                            if fixed_count < 0:
+                                # Row is fundamentally broken (e.g. assistant
+                                # tool_call without matching tool reply). Drop it.
+                                dropped_malformed += 1
+                                continue
                             normalised += fixed_count
                             out.write(json.dumps(row, ensure_ascii=False) + "\n")
+                            total += 1
                         except json.JSONDecodeError:
                             out.write(line.rstrip("\n") + "\n")
-                        total += 1
+                            total += 1
                 shutil.copy2(path, os.path.join(output_dir, os.path.basename(path)))
 
         print(f"\n  Merged {len(downloaded)} file(s) → {merged_path} ({total} examples)")
         if normalised:
             print(f"  Normalised {normalised} messages (e.g. content='null' → null) for FT compatibility")
+        if dropped_malformed:
+            print(f"  Dropped {dropped_malformed} malformed rows (asst tool_call without matching tool reply)")
         print(f"  Source files copied to {output_dir}")
         print(f"\n  Next: auto_finetune.py prepare --task-spec {args.task_spec} --data {merged_path}")
     finally:
@@ -888,19 +897,41 @@ def _normalize_for_ft(row: dict) -> int:
     Returns the number of messages fixed. Currently fixes:
       - assistant messages with tool_calls that have `content: "null"` (string).
         Azure FT rejects these rows. Convert to actual None.
-      - assistant tool_call rows where content is some other non-string but
-        tool_calls are present — drop content (set to None) so it's unambiguous.
+
+    Returns -1 if the row is fundamentally malformed and should be DROPPED.
+    The caller should treat negative returns as "skip this row entirely."
+
+    Drop conditions:
+      - Assistant message with tool_calls but NOT immediately followed by tool
+        reply messages with matching tool_call_id for EACH call. Foundry traces
+        sometimes export truncated turns where a tool call was issued but the
+        reply was never recorded. Azure FT rejects the whole file if any row
+        has this — so we drop the offending rows.
     """
     fixed = 0
-    for m in row.get("messages", []):
+    msgs = row.get("messages", []) or []
+    for m in msgs:
         if m.get("role") == "assistant" and m.get("tool_calls"):
             c = m.get("content")
-            # The literal string "null" — most common bug from traces export
-            if c == "null":
+            if c == "null":  # literal 4-char string from trace export bug
                 m["content"] = None
                 fixed += 1
-            # Empty-string content with tool_calls is fine but inconsistent;
-            # leave as-is to avoid behavioural surprises.
+
+    # Sequence check: every assistant tool_call.id must appear as
+    # tool_call_id in a subsequent tool message before any other assistant turn.
+    for i, m in enumerate(msgs):
+        if m.get("role") != "assistant" or not m.get("tool_calls"):
+            continue
+        expected_ids = {tc.get("id") for tc in m["tool_calls"] if tc.get("id")}
+        seen_ids = set()
+        for fm in msgs[i + 1:]:
+            if fm.get("role") == "tool" and fm.get("tool_call_id"):
+                seen_ids.add(fm["tool_call_id"])
+            elif fm.get("role") in ("assistant", "user", "system"):
+                # Reached the next non-tool turn; tool replies must have come before
+                break
+        if not expected_ids.issubset(seen_ids):
+            return -1
     return fixed
 
 
