@@ -2833,6 +2833,11 @@ def cmd_auto(args):
                 "foundry-traces": ("traces",        "traces"),
             }
             source, recipe = src_map[backend]
+            # Allow user override of recipe (e.g. tool-use with foundry-file when
+            # the uploaded file is an OpenAPI 3.0 spec instead of a prose document)
+            if getattr(args, "datagen_recipe", None):
+                recipe = args.datagen_recipe
+            scenario = getattr(args, "datagen_scenario", None) or "sft"
             prompt_file_for_foundry = None
             if source == "prompt-file":
                 # Write spec.description to a temp file so generate_dataset.py can
@@ -2841,7 +2846,7 @@ def cmd_auto(args):
                 with open(prompt_file_for_foundry, "w", encoding="utf-8") as _pf:
                     _pf.write(spec.get("description", ""))
             fg_args = argparse.Namespace(
-                task_spec=task_spec_path, source=source, recipe=recipe, scenario="sft",
+                task_spec=task_spec_path, source=source, recipe=recipe, scenario=scenario,
                 max_samples=max(15, min(1000, args.num_examples)),
                 train_split=None,  # let prepare phase split
                 teacher=args.teacher,
@@ -2861,6 +2866,40 @@ def cmd_auto(args):
         print("\n  Data is already in SFT chat format — skipping generation.")
     else:
         print(f"\n  Data mode: {data_mode} — skipping generation.")
+
+    # Optional: Azure Content Safety pre-screen between GENERATE and PREPARE.
+    # Off by default. Use when Azure FT preprocessing has rejected your data
+    # with "User data has failed data safety check" and you want to drop the
+    # offending rows automatically. Shells out to scripts/content_safety_check.py
+    # so the helper stays a separate concern (debugging tool, not core flow).
+    if getattr(args, "content_safety_prescreen", False) and data_path and os.path.exists(data_path):
+        import subprocess
+        cs_endpoint = getattr(args, "content_safety_endpoint", None) or os.environ.get("AZURE_CONTENT_SAFETY_ENDPOINT")
+        cs_key = getattr(args, "content_safety_key", None) or os.environ.get("AZURE_CONTENT_SAFETY_KEY")
+        cs_threshold = getattr(args, "content_safety_threshold", None) or 2
+        if not cs_endpoint or not cs_key:
+            print("\n  ⚠️  --content-safety-prescreen set but AZURE_CONTENT_SAFETY_ENDPOINT/KEY unset — skipping.")
+        else:
+            print("\n\n" + "=" * 60)
+            print(f"  PHASE 2b: CONTENT SAFETY PRE-SCREEN (threshold={cs_threshold})")
+            print("=" * 60)
+            cs_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "content_safety_check.py")
+            cleaned = data_path.replace(".jsonl", ".safe.jsonl")
+            cmd = [
+                sys.executable, cs_script,
+                "--jsonl", data_path,
+                "--endpoint", cs_endpoint,
+                "--api-key", cs_key,
+                "--threshold", str(cs_threshold),
+                "--drop-out", cleaned,
+            ]
+            r = subprocess.run(cmd, capture_output=False)
+            if r.returncode in (0, 1) and os.path.exists(cleaned):
+                # rc=1 means some rows were flagged but a clean file was written
+                print(f"\n  Using cleaned data for downstream phases: {cleaned}")
+                data_path = cleaned
+            else:
+                print(f"\n  ⚠️  Pre-screen failed (rc={r.returncode}); proceeding with original {data_path}")
 
     # ── Phase 3: PREPARE ──
     print("\n\n" + "=" * 60)
@@ -3328,6 +3367,20 @@ def build_parser():
     p.add_argument("--datagen-agent-version", default=None, help="Pin agent version for traces (recommended)")
     p.add_argument("--datagen-hours", type=int, default=None,
                    help="Hours of traces to pull (default: 24 when foundry-traces backend is selected, unset otherwise — presence of this flag is one of the inference signals for backend=foundry-traces)")
+    p.add_argument("--datagen-recipe", default=None, choices=["qna", "tool-use", "traces"],
+                   help="Override the Foundry datagen recipe (default: inferred from --datagen-backend — file/agent/prompt → qna, traces → traces). Use 'tool-use' when the file is an OpenAPI 3.0 spec.")
+    p.add_argument("--datagen-scenario", default=None, choices=["sft", "eval"],
+                   help="Override the Foundry datagen scenario (default: sft).")
+    # Optional content-safety pre-screen between Phase 2 (GENERATE) and Phase 3 (PREPARE).
+    # Use when you've seen "User data has failed data safety check" rejections.
+    p.add_argument("--content-safety-prescreen", action="store_true",
+                   help="Score generated data against Azure Content Safety and drop rows above --content-safety-threshold before PREPARE. Off by default. Requires --content-safety-endpoint + --content-safety-key (or AZURE_CONTENT_SAFETY_ENDPOINT / AZURE_CONTENT_SAFETY_KEY env vars).")
+    p.add_argument("--content-safety-endpoint", default=None,
+                   help="Azure Content Safety endpoint, e.g. https://<resource>.cognitiveservices.azure.com")
+    p.add_argument("--content-safety-key", default=None,
+                   help="Azure Content Safety API key")
+    p.add_argument("--content-safety-threshold", type=int, default=2,
+                   help="Severity threshold for the pre-screen (0=safe, 2=low, 4=medium, 6=high). Default 2 because Azure FT preprocessing rejects at low severity in practice.")
     add_connection_args(p)
 
     return parser
