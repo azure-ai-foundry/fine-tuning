@@ -304,10 +304,14 @@ class TestDatagenBackendInference:
         ns = self._ns(datagen_agent_name="retail-agent")
         assert _infer_datagen_backend(ns) == "foundry-agent"
 
-    def test_project_endpoint_alone_infers_foundry_prompt(self):
+    def test_project_endpoint_alone_does_not_infer_foundry(self):
+        """Project-endpoint alone is too weak a signal — many users set
+        AZURE_AI_PROJECT_ENDPOINT for unrelated reasons. Inference falls to local
+        unless the user explicitly passes a datagen-* flag or --datagen-backend.
+        """
         from auto_finetune import _infer_datagen_backend
         ns = self._ns(project_endpoint="https://x.services.ai.azure.com/api/projects/p")
-        assert _infer_datagen_backend(ns) == "foundry-prompt"
+        assert _infer_datagen_backend(ns) == "local"
 
     def test_nothing_set_defaults_to_local(self):
         from auto_finetune import _infer_datagen_backend

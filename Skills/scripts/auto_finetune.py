@@ -2654,9 +2654,15 @@ def _infer_datagen_backend(args) -> str:
          - --datagen-file-id set                            → foundry-file
          - --datagen-agent-name + --datagen-hours set       → foundry-traces
          - --datagen-agent-name set (no hours)              → foundry-agent
-         - --project-endpoint set + nothing more specific   → foundry-prompt
-         - Nothing set                                      → local
-      3. Print the chosen backend so users know how the inference resolved.
+         - (no datagen-* hints)                             → local
+
+    Note: `--project-endpoint` alone is NOT enough to switch to Foundry. Many
+    users set AZURE_AI_PROJECT_ENDPOINT for unrelated reasons (e.g. judge
+    model deployment); routing them through Foundry datagen by accident causes
+    confusing failures like "File content is too small" (the autopilot writes
+    the short task description to a tmp file, which is under the 1 KB minimum).
+    Users must explicitly opt into Foundry via a datagen-* flag or
+    --datagen-backend foundry-prompt.
     """
     explicit = getattr(args, "datagen_backend", "auto")
     if explicit and explicit != "auto":
@@ -2668,10 +2674,8 @@ def _infer_datagen_backend(args) -> str:
         chosen, why = "foundry-traces", "--datagen-agent-name + --datagen-hours set"
     elif getattr(args, "datagen_agent_name", None):
         chosen, why = "foundry-agent", "--datagen-agent-name set (no --datagen-hours)"
-    elif getattr(args, "project_endpoint", None):
-        chosen, why = "foundry-prompt", "--project-endpoint set, no other datagen-* hints"
     else:
-        chosen, why = "local", "no datagen-* flags or --project-endpoint"
+        chosen, why = "local", "no datagen-* flags (use --datagen-backend foundry-prompt to opt in)"
 
     print(f"  Datagen backend inferred: {chosen}  ({why})")
     return chosen
@@ -3252,9 +3256,9 @@ def build_parser():
                         "--datagen-file-id → foundry-file; "
                         "--datagen-agent-name + --datagen-hours → foundry-traces; "
                         "--datagen-agent-name alone → foundry-agent; "
-                        "--project-endpoint alone → foundry-prompt; "
                         "nothing → local. "
-                        "Pass an explicit choice to override inference. "
+                        "Project endpoint alone is NOT enough — must pass a "
+                        "datagen-* flag or explicit --datagen-backend foundry-prompt. "
                         "'local' = in-process teacher loop (no project endpoint required); "
                         "'foundry-*' = Foundry Data Generation API.")
     p.add_argument("--datagen-file-id", default=None, help="OpenAI file id for --datagen-backend foundry-file")

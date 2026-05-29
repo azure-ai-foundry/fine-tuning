@@ -133,8 +133,9 @@ The `generate` phase (the second phase of the autopilot) has two backends:
 | `--datagen-file-id <id>` | `foundry-file` |
 | `--datagen-agent-name <name>` + `--datagen-hours <n>` | `foundry-traces` |
 | `--datagen-agent-name <name>` (no hours) | `foundry-agent` |
-| `--project-endpoint <url>` (and nothing more specific) | `foundry-prompt` |
-| (none of the above) | `local` |
+| (no datagen-* flag) | `local` |
+
+Note: just having `--project-endpoint` set (or `AZURE_AI_PROJECT_ENDPOINT` env var) is **not** enough to switch to Foundry — too many users have that set for other reasons. Pass an explicit `--datagen-backend foundry-prompt` or one of the `--datagen-*` companion flags to opt in.
 
 Pass an explicit `--datagen-backend local|foundry-prompt|foundry-file|foundry-agent|foundry-traces` to override inference. The autopilot prints the chosen backend in Phase 2 so you can see how the inference resolved.
 

@@ -311,8 +311,15 @@ def _build_options_sdk(args):
         common["train_split"] = args.train_split
 
     if args.recipe == "traces":
+        # IMPORTANT: TracesDataGenerationJobOptions does NOT accept model_options.
+        # The service replies 400 "Model options parameter is not applicable for
+        # traces data generation type." Traces are real conversations — there is
+        # no teacher model to invoke.
         if args.teacher:
-            common["model_options"] = DataGenerationModelOptions(model=args.teacher)
+            print(
+                f"⚠️  --teacher {args.teacher!r} ignored: traces recipe doesn't use a teacher (the assistant response in each trace IS the teacher answer).",
+                file=sys.stderr,
+            )
         return TracesDataGenerationJobOptions(**common)
 
     if not args.teacher:
@@ -492,8 +499,15 @@ def _build_options_rest(args):
     d = {"type": type_map[args.recipe], "max_samples": args.max_samples}
     if args.train_split is not None:
         d["train_split"] = args.train_split
-    if args.teacher:
+    if args.teacher and args.recipe != "traces":
+        # Same constraint as SDK path: traces recipe rejects model_options
+        # ("Model options parameter is not applicable for traces data generation type")
         d["model_options"] = {"model": args.teacher}
+    elif args.teacher and args.recipe == "traces":
+        print(
+            f"⚠️  --teacher {args.teacher!r} ignored: traces recipe doesn't use a teacher (the assistant response in each trace IS the teacher answer).",
+            file=sys.stderr,
+        )
     return d
 
 
