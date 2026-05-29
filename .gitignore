@@ -8,3 +8,5 @@ env*/
 Skills/test_agent_*/
 Skills/test_agent_pids.txt
 
+
+Skills/smoke*.log
