@@ -4,3 +4,7 @@ env*/
 .env
 .vs/
 .vscode/
+# Local autopilot test runs (large logs + JSONL outputs)
+Skills/test_agent_*/
+Skills/test_agent_pids.txt
+
