@@ -95,6 +95,13 @@ This directory contains cookbooks demonstrating various fine-tuning techniques o
 **Products/SDKs**: Azure OpenAI (GPT-4.1), Microsoft Foundry  
 **What it shows**: Process video frames, fine-tune vision model for action detection, evaluate video understanding
 
+### [Zava_ModelRouter_FT](Zava_ModelRouter_FT/)
+**Technique**: Model Router Fine-Tuning  
+**Use Case**: Customize the Azure Foundry Model Router for enterprise prompts - router learns which underlying model (GPT-5 / mini / nano) is the cheapest correct choice for each query  
+**Dataset**: Zava enterprise — 200 train / 100 test prompts labelled for `gpt-5`, `gpt-5-mini`, `gpt-5-nano` *(a representative subset — Model Router FT supports any subset of the [supported LLMs](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-router#supported-models))*. See [`Sample_Datasets/Model_Router_Fine_Tuning/zava_enterprise/`](../Sample_Datasets/Model_Router_Fine_Tuning/zava_enterprise/).  
+**Products/SDKs**: Microsoft Foundry, Azure Management REST API  
+**What it shows**: Validate the Model Router data contract (`messages` + per-model `labels` + `usage`), upload + submit + monitor a `model-router` fine-tuning job, deploy via the Management API, and test the new router against a sample prompt and compare its performance vs the baseline router
+
 ### [ZavaRetailAgent](ZavaRetailAgent/)
 **Technique**: Supervised Fine-Tuning (SFT) & Reinforcement Fine-Tuning (RFT) - Ignite 2025 Demo  
 **Use Case**: Retail customer service agent for orders, returns, and product inquiries  

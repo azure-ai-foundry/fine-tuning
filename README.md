@@ -1,6 +1,6 @@
 # Fine-Tuning in AI Foundry
 
-This repository contains **13 end-to-end demos** and **sample datasets** for fine-tuning models on [Azure AI Foundry](http://ai.azure.com/). Use this repo to explore practical fine-tuning workflows and access ready-to-use data for your own projects.
+This repository contains **14 end-to-end demos** and **sample datasets** for fine-tuning models on [Azure AI Foundry](http://ai.azure.com/). Use this repo to explore practical fine-tuning workflows and access ready-to-use data for your own projects.
 
 ## 📋 Table of Contents
 
@@ -45,6 +45,7 @@ Explore end-to-end fine-tuning experiences in the **[Demos](Demos/)** folder:
 | [Image_Breed_Classification_FT](Demos/Image_Breed_Classification_FT/) | Vision SFT | Dog breed classification | ⭐⭐ Intermediate |
 | [Image_FT_Chart_Analysis](Demos/Image_FT_Chart_Analysis/) | Vision SFT | Chart understanding | ⭐⭐ Intermediate |
 | [Video_FT_Action_Recognition](Demos/Video_FT_Action_Recognition/) | Vision SFT | Video action detection | ⭐⭐⭐ Advanced |
+| [Zava_ModelRouter_FT](Demos/Zava_ModelRouter_FT/) | Model Router FT | Fine-tune the Model Router on enterprise prompts (GPT-5 / mini / nano as a representative subset) | ⭐⭐ Intermediate |
 | [ZavaRetailAgent](Demos/ZavaRetailAgent/) | SFT + RFT | Retail customer service agent | ⭐⭐⭐ Advanced |
 | [Agentic_RFT_PrivatePreview](Demos/Agentic_RFT_PrivatePreview/) | RFT | Agentic workflows with tools | ⭐⭐⭐ Advanced |
 | [Evaluation](Demos/Evaluation/) | Evaluation | Multimodal model evaluation | ⭐⭐ Intermediate |
@@ -66,6 +67,7 @@ Ready-to-use datasets for testing fine-tuning techniques in the **[Sample_Datase
 | **DPO** | [orca_dpo_pairs](Sample_Datasets/Direct_Preference_Optimization/orca_dpo_pairs/) | Preference alignment |
 | **RFT** | [ClauseMatching](Sample_Datasets/Reinforcement_Fine_Tuning/ClauseMatching/) | Legal contract analysis |
 | **RFT** | [MedMCQ](Sample_Datasets/Reinforcement_Fine_Tuning/MedMCQ/) | Medical Q&A |
+| **Model Router FT** | [Zava Enterprise](Sample_Datasets/Model_Router_Fine_Tuning/zava_enterprise/) | Enterprise-operations prompts with per-model correctness labels for `gpt-5` / `gpt-5-mini` / `gpt-5-nano` (representative subset — see the canonical [Model Router supported models list](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-router#supported-models)) |
 
 👉 See **[Sample_Datasets/README.md](Sample_Datasets/README.md)** for data format details and when to use each technique.
 

@@ -11,6 +11,7 @@ Each technique has specific data format requirements. See the schema documentati
 | **SFT** | [Supervised_Fine_Tuning/SCHEMA.md](./Supervised_Fine_Tuning/SCHEMA.md) |
 | **DPO** | [Direct_Preference_Optimization/SCHEMA.md](./Direct_Preference_Optimization/SCHEMA.md) |
 | **RFT** | [Reinforcement_Fine_Tuning/SCHEMA.md](./Reinforcement_Fine_Tuning/SCHEMA.md) |
+| **Model Router Fine-Tuning** | [Model_Router_Fine_Tuning/SCHEMA.md](./Model_Router_Fine_Tuning/SCHEMA.md) |
 
 ## Training Techniques
 We offer three training techniques to optimize your models:
@@ -41,5 +42,13 @@ We offer three training techniques to optimize your models:
     - *Sample Datasets*: 
          - [Clause Matching](./Reinforcement_Fine_Tuning/clause-matching/) - legal contract dataset
         -  [Med MCQ](./Reinforcement_Fine_Tuning/MedMCQ/) - Multiple Choice Medical Q&A
+
+- **Model Router Fine-Tuning:** Customizes the Azure Foundry [Model Router](https://learn.microsoft.com/azure/ai-services/openai/how-to/model-router) for your workload by teaching it which underlying model is the cheapest correct choice for each prompt type. Uses a unique data contract — `messages` plus per-model binary `labels` and per-model `usage` — distinct from SFT/DPO/RFT.
+    - *Best for:* Reducing inference cost without sacrificing accuracy when your traffic mixes prompts of varying difficulty.
+    - *When to use:* When the stock Model Router isn't picking the best model for your domain-specific prompts, and you have ground-truth correctness labels for multiple candidate models on representative data.
+    - *Supported Base Model:* `model-router`
+    - *Restrictions:* The deployed router routes between the exact LLM set you labelled for — pick **any subset** of the [supported LLMs](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-router#supported-models) at data-collection time (not deployment time). See [SCHEMA.md](./Model_Router_Fine_Tuning/SCHEMA.md#deployment-restrictions).
+    - *Sample Datasets*:
+        - [Zava Enterprise](./Model_Router_Fine_Tuning/zava_enterprise/) - 200 train / 100 test enterprise-operations prompts labelled for `gpt-5`, `gpt-5-mini`, `gpt-5-nano` *(representative subset)*
 
 **Most customers should start with SFT,** as it addresses the broadest number of fine-tuning use cases.

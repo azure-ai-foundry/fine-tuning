@@ -1,0 +1,2 @@
+step,BaseModelRouter_Cost,BaseModelRouter_Quality,FineTunedModelRouter_Cost,FineTunedModelRouter_Quality,CostliestModel_Cost,CostliestModel_Quality
+0,0.5618099999999998,89,0.3343328,91,3.724955,91
