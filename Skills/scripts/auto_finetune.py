@@ -98,6 +98,20 @@ def _resolve_tier(model_id, requested_tier):
     return requested_tier
 
 
+def _parse_tiers(tier_arg):
+    """Parse the --tier flag value into a list of tiers for round-robin assignment.
+
+    Accepts a single tier ('globalStandard') or comma-separated list
+    ('globalStandard,developerTier'). Returns a non-empty list of strings.
+    Used to distribute candidates across tiers when capacity on one is
+    constrained.
+    """
+    if not tier_arg:
+        return ["globalStandard"]
+    tiers = [t.strip() for t in tier_arg.split(",") if t.strip()]
+    return tiers or ["globalStandard"]
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────
 
 import re as _re_module
@@ -1689,8 +1703,11 @@ def cmd_execute(args):
     # Submit each candidate
     runs = []
     requested_tier = getattr(args, "tier", None) or plan.get("tier", None)
+    tier_pool = _parse_tiers(requested_tier)
+    if len(tier_pool) > 1:
+        print(f"  Tier mix: {tier_pool} (round-robin across candidates)")
 
-    for c in plan["candidates"]:
+    for cand_idx, c in enumerate(plan["candidates"]):
         print(f"\nSubmitting candidate '{c['name']}'...")
         suffix = _sanitize_name(f"{plan.get('task_name', 'auto')}-{c['name']}")
 
@@ -1703,8 +1720,9 @@ def cmd_execute(args):
                          "error": "RFT not supported by auto-finetune"})
             continue
 
-        # Resolve tier per model (OSS → globalStandard only)
-        tier = _resolve_tier(c["model"], requested_tier)
+        # Resolve tier per model+candidate (round-robin across pool; OSS forced to globalStandard)
+        chosen = tier_pool[cand_idx % len(tier_pool)]
+        tier = _resolve_tier(c["model"], chosen)
 
         try:
             # SDK supports trainingType via extra_body. No REST fallback needed for tiers.
@@ -3301,11 +3319,12 @@ def build_parser():
     p.add_argument("--plan", required=True)
     p.add_argument("--output", default="runs.json")
     p.add_argument("--tier", default="globalStandard",
-                   choices=["globalStandard", "developerTier", "standard"],
-                   help="Training tier (overrides plan). Default 'globalStandard' works in all regions. "
-                        "'developerTier' is cheapest but capacity-limited. 'standard' is region-restricted "
-                        "and absent in many regions — only use if you specifically need data residency. "
-                        "OSS models auto-override to 'globalStandard'.")
+                   help="Training tier(s) — single value or comma-separated list for round-robin. "
+                        "'globalStandard' (default, works in all regions). 'developerTier' (cheapest, "
+                        "capacity-limited). 'standard' (region-restricted; absent in many regions). "
+                        "Example: --tier globalStandard,developerTier distributes candidates across "
+                        "both tiers so one capacity bottleneck doesn't block the whole iteration. "
+                        "OSS models auto-override to globalStandard.")
     add_connection_args(p)
 
     # evaluate
@@ -3341,10 +3360,12 @@ def build_parser():
     p.add_argument("--min-quality", type=float, default=7.0, help="Min quality score for generated data")
     p.add_argument("--capacity", type=int, default=100, help="Deployment capacity for eval")
     p.add_argument("--tier", default="globalStandard",
-                   choices=["globalStandard", "developerTier", "standard"],
-                   help="Training tier: 'globalStandard' (default; works in all regions) — recommended. "
+                   help="Training tier(s) — single value or comma-separated list for round-robin. "
+                        "'globalStandard' (default, works in all regions) — recommended. "
                         "'developerTier' (cheapest, spot — may be capacity-limited). "
-                        "'standard' (region-restricted; absent in many regions — use only for data residency). "
+                        "'standard' (region-restricted; absent in many regions). "
+                        "Example: --tier globalStandard,developerTier distributes candidates across "
+                        "both tiers so one capacity bottleneck doesn't block the whole iteration. "
                         "OSS models (qwen, llama, ministral, oss-20b) auto-override to globalStandard. "
                         "Tier is sent via extra_body to the SDK, body parameter to REST.")
     p.add_argument("--datagen-backend", default="auto",

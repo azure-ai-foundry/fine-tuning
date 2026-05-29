@@ -324,6 +324,35 @@ class TestDatagenBackendInference:
         assert _infer_datagen_backend(ns) == "foundry-file"
 
 
+class TestTierParsing:
+    """Unit tests for _parse_tiers — used to mix tiers across candidates."""
+
+    @pytest.fixture(autouse=True)
+    def _path(self):
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        yield
+        try: sys.path.remove(str(SCRIPTS_DIR))
+        except ValueError: pass
+
+    def test_single_tier(self):
+        from auto_finetune import _parse_tiers
+        assert _parse_tiers("globalStandard") == ["globalStandard"]
+
+    def test_csv_two_tiers(self):
+        from auto_finetune import _parse_tiers
+        assert _parse_tiers("globalStandard,developerTier") == ["globalStandard", "developerTier"]
+
+    def test_csv_with_whitespace(self):
+        from auto_finetune import _parse_tiers
+        assert _parse_tiers(" globalStandard , developerTier ") == ["globalStandard", "developerTier"]
+
+    def test_empty_falls_back_to_default(self):
+        from auto_finetune import _parse_tiers
+        assert _parse_tiers(None) == ["globalStandard"]
+        assert _parse_tiers("") == ["globalStandard"]
+        assert _parse_tiers(",") == ["globalStandard"]
+
+
 # ── Cost Estimation ──────────────────────────────────────────────────────
 
 class TestCostEstimation:
