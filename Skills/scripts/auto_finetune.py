@@ -2877,6 +2877,43 @@ def cmd_auto(args):
     else:
         print(f"\n  Data mode: {data_mode} — skipping generation.")
 
+    # Phase 2a: TRACES TRANSFORM (foundry-traces backend only)
+    # The Foundry Data Generation API's "traces" recipe emits raw stitched-span
+    # JSONL that is NOT directly accepted by Azure FT preprocessing for several
+    # reasons (overlapping snapshots, content="null" strings, multiple consecutive
+    # assistant tool_calls turns, missing system+tools at row level). The helper
+    # scripts/transform_traces_jsonl.py applies all the fixes. Run it unconditionally
+    # when backend=foundry-traces, but require the caller to supply a system prompt
+    # and tools file — these can't be auto-derived from traces alone.
+    if backend == "foundry-traces" and data_path and os.path.exists(data_path):
+        sp_file = getattr(args, "traces_system_prompt_file", None)
+        tools_file = getattr(args, "traces_tools_file", None)
+        if not sp_file or not tools_file:
+            print("\n  ⚠️  --datagen-backend foundry-traces requires --traces-system-prompt-file")
+            print("     and --traces-tools-file to produce FT-ready data. Without them the")
+            print("     raw export is rejected by Azure FT preprocessing with schema(N) errors.")
+            print(f"     Proceeding with raw data anyway: {data_path}")
+        else:
+            import subprocess
+            print("\n\n" + "=" * 60)
+            print("  PHASE 2a: TRACES TRANSFORM")
+            print("=" * 60)
+            tx_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "transform_traces_jsonl.py")
+            cleaned = data_path.replace(".jsonl", ".transformed.jsonl")
+            cmd = [
+                sys.executable, tx_script,
+                "--jsonl", data_path,
+                "--system-prompt-file", sp_file,
+                "--tools-file", tools_file,
+                "--out", cleaned,
+            ]
+            r = subprocess.run(cmd, capture_output=False)
+            if r.returncode == 0 and os.path.exists(cleaned):
+                print(f"\n  Using transformed traces for downstream phases: {cleaned}")
+                data_path = cleaned
+            else:
+                print(f"\n  ⚠️  Transform failed (rc={r.returncode}); proceeding with raw {data_path}")
+
     # Optional: Azure Content Safety pre-screen between GENERATE and PREPARE.
     # Off by default. Use when Azure FT preprocessing has rejected your data
     # with "User data has failed data safety check" and you want to drop the
@@ -3381,6 +3418,11 @@ def build_parser():
                    help="Override the Foundry datagen recipe (default: inferred from --datagen-backend — file/agent/prompt → qna, traces → traces). Use 'tool-use' when the file is an OpenAPI 3.0 spec.")
     p.add_argument("--datagen-scenario", default=None, choices=["sft", "eval"],
                    help="Override the Foundry datagen scenario (default: sft).")
+    # Required-when-foundry-traces inputs. The traces export has none of these at row level.
+    p.add_argument("--traces-system-prompt-file", default=None,
+                   help="Path to the agent's system prompt text. Required for --datagen-backend foundry-traces — injected into each training row so the FT'd model learns the right persona.")
+    p.add_argument("--traces-tools-file", default=None,
+                   help="Path to a JSON file containing the agent's tool definitions (OpenAI chat.completions tools array). Required for --datagen-backend foundry-traces — injected into each training row so the FT'd model learns tool schemas.")
     # Optional content-safety pre-screen between Phase 2 (GENERATE) and Phase 3 (PREPARE).
     # Use when you've seen "User data has failed data safety check" rejections.
     p.add_argument("--content-safety-prescreen", action="store_true",

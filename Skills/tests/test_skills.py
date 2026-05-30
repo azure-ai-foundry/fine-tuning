@@ -248,6 +248,17 @@ class TestAutoFinetuneCLI:
                        "foundry-agent", "foundry-traces"]:
             assert choice in result.stdout, f"--datagen-backend choice {choice} missing"
 
+    def test_auto_includes_traces_transform_flags(self):
+        """`auto` subcommand should expose --traces-system-prompt-file/--traces-tools-file
+        for the foundry-traces backend (Phase 2a transform wiring)."""
+        result = subprocess.run(
+            [sys.executable, self.AUTO_FT, "auto", "--help"],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0
+        for flag in ["--traces-system-prompt-file", "--traces-tools-file"]:
+            assert flag in result.stdout, f"auto missing {flag}"
+
     def test_analyze_accepts_connection_args(self):
         """The 'analyze' subcommand should accept connection args."""
         result = subprocess.run(

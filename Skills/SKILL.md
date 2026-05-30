@@ -99,6 +99,7 @@ Reusable Python scripts in `scripts/`. Each is self-contained with inline docume
 | Validate SFT data | `python scripts/validate/validate_sft.py data.jsonl` |
 | Triage `"User data has failed data safety check"` errors | `python scripts/content_safety_check.py --jsonl train.jsonl --endpoint https://<resource>.cognitiveservices.azure.com --api-key $env:AZURE_CONTENT_SAFETY_KEY --drop-out clean.jsonl` |
 | Transform Foundry traces output into Azure FT-ready JSONL (for traces-to-SFT distillation) | `python scripts/transform_traces_jsonl.py --jsonl raw_traces_dg.jsonl --system-prompt-file system.md --tools-file tools.json --out sft.jsonl` |
+| Full autopilot for traces distillation (auto-runs the transform) | `python scripts/auto_finetune.py auto --description "..." --task-name <name> --model <student> --teacher <strong> --datagen-agent-name <agent> --datagen-agent-version <v> --datagen-hours 720 --traces-system-prompt-file system.md --traces-tools-file tools.json` |
 | Generate dataset from agent traces | `python scripts/generate_dataset.py --source traces --agent-name <name> --agent-version <v> --recipe traces --scenario sft --max-samples 200 --train-split 0.8 --hours 24 --download` |
 | Generate Q&A from a doc | `python scripts/generate_dataset.py --source prompt-file --prompt-file policy.md --recipe qna --scenario sft --teacher gpt-4.1-mini --max-samples 100 --train-split 0.9 --download` |
 | Convert OpenAI tools to OpenAPI 3.0 (for tool-use) | `python scripts/generate_dataset.py --tools-from openai_tools.json --tools-to-openapi-out openapi.json` |
