@@ -543,7 +543,7 @@ def cmd_generate(args):
                     ex = json.loads(line)
                     existing_examples.append(ex)
                     # Extract user content as dedup key
-                    user_msg = next((m["content"] for m in ex.get("messages", []) if m["role"] == "user"), "")
+                    user_msg = next((m.get("content") or "" for m in ex.get("messages", []) if m.get("role") == "user"), "")
                     existing_inputs.add(user_msg.lower().strip()[:200])
         print(f"  Loaded {len(existing_examples)} existing examples for deduplication")
 
@@ -2615,13 +2615,22 @@ def _evaluate_model_on_test(client, model, test_data, rubric, judge_model):
 
     all_scores = []
     errors = 0
+    skipped_tool_only = 0
 
     for i, ex in enumerate(test_data):
         msgs = ex.get("messages", [])
         # Extract system, user, reference
-        system_msgs = [m for m in msgs if m["role"] == "system"]
-        user_msg = next((m["content"] for m in msgs if m["role"] == "user"), "")
-        reference = next((m["content"] for m in msgs if m["role"] == "assistant"), "")
+        system_msgs = [m for m in msgs if m.get("role") == "system"]
+        user_msg = next((m.get("content") or "" for m in msgs if m.get("role") == "user"), "")
+        # First asst message — for tool-using traces this may have tool_calls and no content.
+        # We can't text-compare a tool call to model output, so skip those rows here.
+        first_asst = next((m for m in msgs if m.get("role") == "assistant"), None)
+        if first_asst is None:
+            continue
+        reference = first_asst.get("content") or ""
+        if not reference and first_asst.get("tool_calls"):
+            skipped_tool_only += 1
+            continue
 
         # Generate response
         gen_msgs = system_msgs + [{"role": "user", "content": user_msg}]
@@ -2676,8 +2685,11 @@ def _evaluate_model_on_test(client, model, test_data, rubric, judge_model):
 
     # Aggregate
     valid = [s for s in all_scores if any(v > 0 for v in s.values())]
+    if skipped_tool_only:
+        print(f"  ⚠️  Skipped {skipped_tool_only} test row(s) where the first assistant message is a tool_call (no text reference to compare). Tool-use eval needs a different signal (per-tool match) — out of scope for the text-judge.")
     if not valid:
-        return {"combined": 0, "pass_rate": 0, "errors": errors, "n": len(test_data)}
+        return {"combined": 0, "pass_rate": 0, "errors": errors, "n": len(test_data),
+                "skipped_tool_only": skipped_tool_only}
 
     dim_avgs = {}
     for d in dim_names:
@@ -2702,6 +2714,7 @@ def _evaluate_model_on_test(client, model, test_data, rubric, judge_model):
         "n_scored": len(valid),
         "n_total": len(test_data),
         "errors": errors,
+        "skipped_tool_only": skipped_tool_only,
     }
 
 
