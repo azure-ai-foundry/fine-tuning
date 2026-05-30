@@ -2578,6 +2578,36 @@ def cmd_review(args):
                     manifest = json.load(f)
                 train_examples = manifest.get("splits", {}).get("train", {}).get("count", "?")
 
+    # Deep diagnose on ITERATE (opt-in via --deep-diagnose or env DEEP_DIAGNOSE=1).
+    # Inspects sampled train/test rows with an LLM judge and surfaces a root-cause +
+    # concrete next-step. Costs one judge call per iteration.
+    deep_diagnosis = None
+    if decision == "ITERATE" and (getattr(args, "deep_diagnose", False) or os.environ.get("DEEP_DIAGNOSE") == "1"):
+        try:
+            import subprocess
+            judge = getattr(args, "deep_diagnose_judge", None) or spec.get("eval_rubric", {}).get("judge_model") or "gpt-4.1"
+            base_url_dd = getattr(args, "base_url", None) or os.environ.get("OPENAI_BASE_URL")
+            api_key_dd = getattr(args, "api_key", None) or os.environ.get("AZURE_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
+            project_dd = getattr(args, "project_endpoint", None) or os.environ.get("AZURE_AI_PROJECT_ENDPOINT")
+            if (base_url_dd or project_dd) and api_key_dd:
+                work_dir_dd = os.path.dirname(os.path.abspath(args.task_spec))
+                dd_out = os.path.join(work_dir_dd, f"deep_diagnosis_iter{iteration}.json")
+                dd_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "diagnose_iteration.py")
+                dd_cmd = [sys.executable, dd_script,
+                          "--work-dir", work_dir_dd,
+                          "--judge", judge,
+                          "--out", dd_out]
+                if base_url_dd: dd_cmd += ["--base-url", base_url_dd]
+                if project_dd: dd_cmd += ["--project-endpoint", project_dd]
+                if api_key_dd: dd_cmd += ["--api-key", api_key_dd]
+                subprocess.run(dd_cmd, capture_output=False)
+                if os.path.exists(dd_out):
+                    deep_diagnosis = json.load(open(dd_out, encoding="utf-8"))
+            else:
+                print("\n  ⚠️  --deep-diagnose requested but no base-url/api-key — skipped.")
+        except Exception as dd_err:
+            print(f"\n  ⚠️  Deep diagnose failed: {dd_err}")
+
     # Save review with full diagnostics
     review = {
         "iteration": iteration,
@@ -2589,6 +2619,7 @@ def cmd_review(args):
         "candidate_diagnostics": diagnostics,
         "recommendations": recommendations,
         "train_examples": train_examples,
+        "deep_diagnosis": deep_diagnosis,
         "next_action": {
             "SHIP": "Deploy the winning model",
             "ITERATE": f"Design new candidates (iteration {iteration + 1}) addressing the recommendations above",
@@ -3241,6 +3272,10 @@ def cmd_auto(args):
             leaderboard=leaderboard_path, baseline=baseline_path,
             task_spec=task_spec_path, output=review_path,
             runs=runs_path,
+            deep_diagnose=getattr(args, "deep_diagnose", False),
+            deep_diagnose_judge=getattr(args, "deep_diagnose_judge", None),
+            base_url=args.base_url, api_key=args.api_key,
+            project_endpoint=args.project_endpoint,
         )
         cmd_review(rev_args)
 
@@ -3523,6 +3558,11 @@ def build_parser():
     p.add_argument("--task-spec", required=True)
     p.add_argument("--output", default="review.json")
     p.add_argument("--runs", default=None, help="runs.json for training metrics (optional)")
+    p.add_argument("--deep-diagnose", action="store_true",
+                   help="When decision=ITERATE, also run scripts/diagnose_iteration.py to inspect sampled train/test rows with an LLM judge and surface a root-cause + concrete next step. Costs one judge call. Also enabled via env DEEP_DIAGNOSE=1.")
+    p.add_argument("--deep-diagnose-judge", default=None,
+                   help="Judge model for deep diagnosis (default: task_spec eval_rubric.judge_model, else gpt-4.1).")
+    add_connection_args(p)
 
     # auto (full loop)
     p = sub.add_parser("auto", help="Run the full loop: analyze → prepare → baseline → train → evaluate → iterate")
@@ -3593,6 +3633,11 @@ def build_parser():
                    help="Min score (1-5) the judge must give on every axis for a row to pass (default: 4).")
     p.add_argument("--quality-filter-concurrency", type=int, default=4,
                    help="Parallel judge requests during quality filter (default: 4).")
+    # Deep diagnosis on ITERATE (LLM-judge data inspection)
+    p.add_argument("--deep-diagnose", action="store_true",
+                   help="When the autopilot returns ITERATE, also run scripts/diagnose_iteration.py to inspect sampled train/test data with an LLM judge and surface a root-cause + concrete next step. Costs one judge call per iteration. Also enabled by env DEEP_DIAGNOSE=1.")
+    p.add_argument("--deep-diagnose-judge", default=None,
+                   help="Judge model for deep diagnosis (default: task_spec eval_rubric.judge_model, else gpt-4.1).")
     add_connection_args(p)
 
     return parser
