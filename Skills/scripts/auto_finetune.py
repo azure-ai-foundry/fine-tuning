@@ -3061,6 +3061,44 @@ def cmd_auto(args):
             else:
                 print(f"\n  ⚠️  Pre-screen failed (rc={r.returncode}); proceeding with original {data_path}")
 
+    # Phase 2c: QUALITY FILTER (LLM-judge per-row)
+    # Drops generated rows that the judge scores as fragmented, blank, or off-topic.
+    # Off by default. Recommended for synthetic QnA datasets where datagen can
+    # produce truncated or refusal-style outputs that hurt downstream training.
+    if getattr(args, "quality_filter", False) and data_path and os.path.exists(data_path):
+        import subprocess
+        qf_judge = getattr(args, "quality_filter_judge", None) or "gpt-4.1-mini"
+        qf_threshold = getattr(args, "quality_filter_threshold", None) or 4
+        qf_concurrency = getattr(args, "quality_filter_concurrency", None) or 4
+        base_url_for_judge = args.base_url or os.environ.get("OPENAI_BASE_URL")
+        api_key_for_judge = args.api_key or os.environ.get("AZURE_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        if not base_url_for_judge or not api_key_for_judge:
+            print("\n  ⚠️  --quality-filter set but base-url/api-key unavailable — skipping.")
+        else:
+            print("\n\n" + "=" * 60)
+            print(f"  PHASE 2c: QUALITY FILTER (judge={qf_judge}, threshold={qf_threshold}/5)")
+            print("=" * 60)
+            qf_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quality_filter.py")
+            filtered = data_path.replace(".jsonl", ".qualityfilter.jsonl")
+            qf_report = data_path.replace(".jsonl", ".qualityfilter.json")
+            cmd = [
+                sys.executable, qf_script,
+                "--jsonl", data_path,
+                "--drop-out", filtered,
+                "--report", qf_report,
+                "--base-url", base_url_for_judge,
+                "--api-key", api_key_for_judge,
+                "--judge", qf_judge,
+                "--threshold", str(qf_threshold),
+                "--concurrency", str(qf_concurrency),
+            ]
+            r = subprocess.run(cmd, capture_output=False)
+            if r.returncode in (0, 1) and os.path.exists(filtered):
+                print(f"\n  Using quality-filtered data for downstream phases: {filtered}")
+                data_path = filtered
+            else:
+                print(f"\n  ⚠️  Quality filter failed (rc={r.returncode}); proceeding with original {data_path}")
+
     # ── Phase 3: PREPARE ──
     print("\n\n" + "=" * 60)
     print("  PHASE 3: PREPARE")
@@ -3546,6 +3584,15 @@ def build_parser():
                    help="Azure Content Safety API key")
     p.add_argument("--content-safety-threshold", type=int, default=2,
                    help="Severity threshold for the pre-screen (0=safe, 2=low, 4=medium, 6=high). Default 2 because Azure FT preprocessing rejects at low severity in practice.")
+    # Optional Phase 2c quality filter (LLM-judge per-row)
+    p.add_argument("--quality-filter", action="store_true",
+                   help="Score each generated row with an LLM judge on non-fragmented/non-empty/on-topic axes; drop rows below --quality-filter-threshold. Recommended for synthetic QnA where datagen can produce truncated or refusal outputs. Off by default.")
+    p.add_argument("--quality-filter-judge", default="gpt-4.1-mini",
+                   help="Judge model deployment for the quality filter (default: gpt-4.1-mini).")
+    p.add_argument("--quality-filter-threshold", type=int, default=4,
+                   help="Min score (1-5) the judge must give on every axis for a row to pass (default: 4).")
+    p.add_argument("--quality-filter-concurrency", type=int, default=4,
+                   help="Parallel judge requests during quality filter (default: 4).")
     add_connection_args(p)
 
     return parser

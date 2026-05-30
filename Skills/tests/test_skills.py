@@ -416,6 +416,32 @@ class TestToolCallScoring:
         assert _score_tool_calls(ref, out) == 10
 
 
+class TestAutoIncludesQualityFilterFlags:
+    """Phase 2c quality-filter CLI surface."""
+
+    AUTO_FT = str(SCRIPTS_DIR / "auto_finetune.py")
+
+    def test_auto_exposes_quality_filter_flags(self):
+        result = subprocess.run(
+            [sys.executable, self.AUTO_FT, "auto", "--help"],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0
+        for flag in ["--quality-filter", "--quality-filter-judge",
+                     "--quality-filter-threshold", "--quality-filter-concurrency"]:
+            assert flag in result.stdout, f"auto missing {flag}"
+
+    def test_quality_filter_script_help(self):
+        qf = str(SCRIPTS_DIR / "quality_filter.py")
+        result = subprocess.run(
+            [sys.executable, qf, "--help"],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0
+        for flag in ["--jsonl", "--drop-out", "--report", "--judge", "--threshold", "--concurrency"]:
+            assert flag in result.stdout, f"quality_filter.py missing {flag}"
+
+
 # ── Cost Estimation ──────────────────────────────────────────────────────
 
 class TestCostEstimation:
