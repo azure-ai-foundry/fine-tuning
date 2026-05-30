@@ -2604,6 +2604,66 @@ def cmd_review(args):
 
 # ── Shared evaluation helper ─────────────────────────────────────────────
 
+def _score_tool_calls(ref_calls, out_calls):
+    """Compare reference vs model-produced tool_calls. Returns 1-10 score.
+
+    Scoring:
+      - 10 if exact match: same set of tool names, and all arguments match exactly
+      - 8  if all tool names match but at least one arg differs
+      - 5  if half the tool names match
+      - 2  if at least one tool name matches but most don't
+      - 1  if no overlap, or model emitted no tool_calls when reference had some
+
+    Multi-call comparison uses unordered set semantics (parallel_tool_calls
+    are not order-sensitive).
+    """
+    import json as _json
+    if not ref_calls:
+        return 10 if not out_calls else 5  # ref didn't want a call; partial credit if model called anyway
+    if not out_calls:
+        return 1
+
+    def _name(c):
+        if isinstance(c, dict):
+            return ((c.get("function") or {}).get("name")) or c.get("name")
+        # SDK object
+        fn = getattr(c, "function", None)
+        return getattr(fn, "name", None) if fn else getattr(c, "name", None)
+
+    def _args(c):
+        if isinstance(c, dict):
+            raw = ((c.get("function") or {}).get("arguments")) or c.get("arguments")
+        else:
+            fn = getattr(c, "function", None)
+            raw = getattr(fn, "arguments", None) if fn else getattr(c, "arguments", None)
+        if raw is None:
+            return {}
+        if isinstance(raw, str):
+            try:
+                return _json.loads(raw)
+            except Exception:
+                return {"_raw": raw}
+        return raw
+
+    ref_names = [_name(c) for c in ref_calls]
+    out_names = [_name(c) for c in out_calls]
+    ref_set = set(ref_names)
+    out_set = set(out_names)
+    overlap = ref_set & out_set
+    if not overlap:
+        return 1
+    if ref_set != out_set:
+        # Partial name match
+        ratio = len(overlap) / len(ref_set | out_set)
+        return max(2, int(round(2 + ratio * 6)))  # 2..8 range
+
+    # All tool names match — now check args
+    ref_args_by_name = {_name(c): _args(c) for c in ref_calls}
+    out_args_by_name = {_name(c): _args(c) for c in out_calls}
+    all_args_match = all(ref_args_by_name[n] == out_args_by_name.get(n) for n in ref_names)
+    return 10 if all_args_match else 8
+
+
 def _evaluate_model_on_test(client, model, test_data, rubric, judge_model):
     """Run a model on test data and grade with LLM judge."""
     import re
@@ -2616,6 +2676,7 @@ def _evaluate_model_on_test(client, model, test_data, rubric, judge_model):
     all_scores = []
     errors = 0
     skipped_tool_only = 0
+    scored_tool_calls = 0  # tool-call rows that got scored via tool-match path
 
     for i, ex in enumerate(test_data):
         msgs = ex.get("messages", [])
@@ -2623,12 +2684,44 @@ def _evaluate_model_on_test(client, model, test_data, rubric, judge_model):
         system_msgs = [m for m in msgs if m.get("role") == "system"]
         user_msg = next((m.get("content") or "" for m in msgs if m.get("role") == "user"), "")
         # First asst message — for tool-using traces this may have tool_calls and no content.
-        # We can't text-compare a tool call to model output, so skip those rows here.
         first_asst = next((m for m in msgs if m.get("role") == "assistant"), None)
         if first_asst is None:
             continue
         reference = first_asst.get("content") or ""
-        if not reference and first_asst.get("tool_calls"):
+        ref_tool_calls = first_asst.get("tool_calls") or []
+        row_tools = ex.get("tools") or []
+
+        # Tool-call path: first asst was a tool call. Run inference WITH tools, compare tool_calls.
+        if ref_tool_calls and row_tools:
+            gen_msgs = system_msgs + [{"role": "user", "content": user_msg}]
+            try:
+                resp = client.chat.completions.create(
+                    model=model, messages=gen_msgs, tools=row_tools,
+                    temperature=0.0, max_completion_tokens=2048,
+                )
+                out_msg = resp.choices[0].message
+                out_tool_calls = getattr(out_msg, "tool_calls", None) or []
+            except Exception as e:
+                errors += 1
+                all_scores.append({d: 0 for d in dim_names})
+                if (i + 1) % 10 == 0:
+                    print(f"  [{i+1}/{len(test_data)}] (error: {e})")
+                continue
+
+            tc_score = _score_tool_calls(ref_tool_calls, out_tool_calls)
+            # Map the single tool-match score to every rubric dimension.
+            scores = {d: tc_score for d in dim_names}
+            all_scores.append(scores)
+            scored_tool_calls += 1
+            if (i + 1) % 10 == 0:
+                print(f"  [{i+1}/{len(test_data)}] scored (tool-call, match={tc_score}/10)")
+            continue
+
+        # Text path: skip if neither text nor tool_calls (degenerate row)
+        if not reference and not ref_tool_calls:
+            continue
+        # Tool-call ref but no tools array — can't replay, skip
+        if not reference and ref_tool_calls and not row_tools:
             skipped_tool_only += 1
             continue
 
@@ -2686,10 +2779,16 @@ def _evaluate_model_on_test(client, model, test_data, rubric, judge_model):
     # Aggregate
     valid = [s for s in all_scores if any(v > 0 for v in s.values())]
     if skipped_tool_only:
-        print(f"  ⚠️  Skipped {skipped_tool_only} test row(s) where the first assistant message is a tool_call (no text reference to compare). Tool-use eval needs a different signal (per-tool match) — out of scope for the text-judge.")
+        print(f"  ⚠️  Skipped {skipped_tool_only} test row(s) where the first assistant message is a tool_call but no tools[] was on the row. Cannot replay tool inference.")
+    if scored_tool_calls:
+        print(f"  ℹ️  Scored {scored_tool_calls}/{len(test_data)} test row(s) via tool-call match (tool name + arg comparison).")
+    coverage = len(valid) / len(test_data) if test_data else 0
+    if coverage < 0.5 and test_data:
+        print(f"  ⚠️  Eval coverage low: {len(valid)}/{len(test_data)} rows scored ({coverage:.0%}). Score may not be representative.")
     if not valid:
         return {"combined": 0, "pass_rate": 0, "errors": errors, "n": len(test_data),
-                "skipped_tool_only": skipped_tool_only}
+                "skipped_tool_only": skipped_tool_only,
+                "scored_tool_calls": scored_tool_calls}
 
     dim_avgs = {}
     for d in dim_names:
@@ -2715,6 +2814,7 @@ def _evaluate_model_on_test(client, model, test_data, rubric, judge_model):
         "n_total": len(test_data),
         "errors": errors,
         "skipped_tool_only": skipped_tool_only,
+        "scored_tool_calls": scored_tool_calls,
     }
 
 

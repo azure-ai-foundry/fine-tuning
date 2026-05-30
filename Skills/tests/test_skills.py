@@ -364,6 +364,58 @@ class TestTierParsing:
         assert _parse_tiers(",") == ["globalStandard"]
 
 
+class TestToolCallScoring:
+    """Unit tests for _score_tool_calls — used to grade tool-using FT outputs."""
+
+    @pytest.fixture(autouse=True)
+    def _path(self):
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        yield
+        try: sys.path.remove(str(SCRIPTS_DIR))
+        except ValueError: pass
+
+    def _mk(self, name, args):
+        return {"function": {"name": name, "arguments": __import__("json").dumps(args)}}
+
+    def test_exact_match_full_score(self):
+        from auto_finetune import _score_tool_calls
+        ref = [self._mk("get_order", {"id": "A1"})]
+        out = [self._mk("get_order", {"id": "A1"})]
+        assert _score_tool_calls(ref, out) == 10
+
+    def test_name_match_arg_diff(self):
+        from auto_finetune import _score_tool_calls
+        ref = [self._mk("get_order", {"id": "A1"})]
+        out = [self._mk("get_order", {"id": "B2"})]
+        assert _score_tool_calls(ref, out) == 8
+
+    def test_no_overlap(self):
+        from auto_finetune import _score_tool_calls
+        ref = [self._mk("get_order", {"id": "A1"})]
+        out = [self._mk("submit_refund", {"id": "B2"})]
+        assert _score_tool_calls(ref, out) == 1
+
+    def test_model_emitted_no_tool_calls(self):
+        from auto_finetune import _score_tool_calls
+        ref = [self._mk("get_order", {"id": "A1"})]
+        assert _score_tool_calls(ref, []) == 1
+
+    def test_partial_overlap_in_parallel(self):
+        from auto_finetune import _score_tool_calls
+        ref = [self._mk("a", {}), self._mk("b", {})]
+        out = [self._mk("a", {}), self._mk("c", {})]
+        # |overlap|/|union| = 1/3 → score in 2..8 range
+        score = _score_tool_calls(ref, out)
+        assert 2 <= score < 8
+
+    def test_handles_dict_with_top_level_name(self):
+        from auto_finetune import _score_tool_calls
+        # Some SDKs emit top-level name/arguments instead of function.{name,arguments}
+        ref = [{"name": "x", "arguments": '{"a": 1}'}]
+        out = [{"name": "x", "arguments": '{"a": 1}'}]
+        assert _score_tool_calls(ref, out) == 10
+
+
 # ── Cost Estimation ──────────────────────────────────────────────────────
 
 class TestCostEstimation:
