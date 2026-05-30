@@ -2,3 +2,5 @@ requests>=2.31
 python-dotenv>=1.0
 pandas>=2.0
 tqdm>=4.66
+azure-identity>=1.15
+openai>=1.30
