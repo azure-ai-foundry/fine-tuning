@@ -23,6 +23,24 @@ Usage:
 
 This uploads 10 chunked files, submits 10 datagen jobs (concurrency-capped),
 and concatenates the results into one JSONL.
+
+⚠️ TPM headroom matters
+-----------------------
+The Foundry datagen service reads the source chunk into the teacher's
+context many times per generated Q&A pair, so each parallel job uses
+significant TPM. A 100 KB chunk fed to a teacher with 500K TPM can
+support roughly 1-2 parallel jobs; 2-3 parallel jobs against the same
+teacher quickly exceeds the quota and the service fails with
+"Too many Rate limit errors". To run more chunks in parallel you must
+either bump the teacher's TPM or use smaller chunks.
+
+Recommended starting points:
+  - 200K TPM teacher → concurrency=1, chunks of ≤100KB
+  - 500K TPM teacher → concurrency=2, chunks of ≤150KB
+  - 1M+ TPM teacher → concurrency=3-5, chunks of ≤200KB
+
+If parallel jobs fail with rate limits, lower --concurrency or shrink
+--chunks (smaller chunks = less per-job TPM usage).
 """
 from __future__ import annotations
 
