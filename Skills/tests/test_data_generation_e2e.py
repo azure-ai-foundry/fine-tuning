@@ -4,8 +4,8 @@ These tests hit the real service. Run with:
 
     pytest tests/test_data_generation_e2e.py -m live -v -s
 
-Defaults target `cont-learning-faos` / `REDACTED-FOUNDRY-PROJECT` test projects.
-Override via env vars (see conftest.py).
+Set FOUNDRY_PROJECT_ENDPOINT (required) and the optional FOUNDRY_AGENT_NAME /
+FOUNDRY_AGENT_VERSION env vars described in conftest.py to point at your AI project.
 """
 
 import io

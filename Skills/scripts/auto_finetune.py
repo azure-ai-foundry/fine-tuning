@@ -2792,7 +2792,7 @@ def _evaluate_model_on_test(client, model, test_data, rubric, judge_model):
 
     dim_avgs = {}
     for d in dim_names:
-        vals = [s[d] for s in valid if s[d] > 0]
+        vals = [s.get(d, 0) for s in valid if s.get(d, 0) > 0]
         dim_avgs[d] = sum(vals) / len(vals) if vals else 0
 
     total_weight = sum(weights.values())

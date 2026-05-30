@@ -442,6 +442,146 @@ class TestAutoIncludesQualityFilterFlags:
             assert flag in result.stdout, f"quality_filter.py missing {flag}"
 
 
+class TestTransformTracesJsonl:
+    """Unit tests for transform_traces_jsonl helpers (the 5 fixes)."""
+
+    @pytest.fixture(autouse=True)
+    def _path(self):
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        yield
+        try: sys.path.remove(str(SCRIPTS_DIR))
+        except ValueError: pass
+
+    def test_dedup_overlapping_snapshots(self):
+        from transform_traces_jsonl import dedup_messages
+        msgs = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello"},
+            {"role": "user", "content": "hi"},  # duplicate
+            {"role": "assistant", "content": "hello"},  # duplicate
+            {"role": "user", "content": "what now"},
+        ]
+        out, dropped = dedup_messages(msgs)
+        assert dropped == 2
+        assert len(out) == 3
+        assert out[-1] == {"role": "user", "content": "what now"}
+
+    def test_is_fragment_true_no_tool_calls(self):
+        from transform_traces_jsonl import is_fragment
+        assert is_fragment([
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "what color?"},
+        ]) is True
+
+    def test_is_fragment_false_with_tool_calls(self):
+        from transform_traces_jsonl import is_fragment
+        assert is_fragment([
+            {"role": "user", "content": "order status"},
+            {"role": "assistant", "tool_calls": [{"id": "1", "function": {"name": "get_order"}}]},
+        ]) is False
+
+    def test_merge_consecutive_asst_tool_calls(self):
+        from transform_traces_jsonl import merge_consecutive_asst_tool_calls
+        msgs = [
+            {"role": "user", "content": "x"},
+            {"role": "assistant", "tool_calls": [{"id": "a", "function": {"name": "f1"}}]},
+            {"role": "assistant", "tool_calls": [{"id": "b", "function": {"name": "f2"}}]},
+            {"role": "tool", "tool_call_id": "a", "content": "ok"},
+            {"role": "tool", "tool_call_id": "b", "content": "ok"},
+        ]
+        merged = merge_consecutive_asst_tool_calls(msgs)
+        assert merged == 1
+        assert len(msgs) == 4
+        # The merged assistant now has both tool calls
+        asst = msgs[1]
+        assert len(asst["tool_calls"]) == 2
+
+    def test_fix_null_content_strips_field(self):
+        from transform_traces_jsonl import fix_null_content
+        msgs = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "null", "tool_calls": [{"id": "a", "function": {"name": "f"}}]},
+            {"role": "assistant", "content": "text-only reply"},
+        ]
+        n = fix_null_content(msgs)
+        assert n == 1
+        assert "content" not in msgs[1]  # stripped on tool-call row
+        assert msgs[2]["content"] == "text-only reply"  # text-only row untouched
+
+
+class TestQualityFilter:
+    """Unit tests for quality_filter._extract_pair (judge interaction is mocked-out scope)."""
+
+    @pytest.fixture(autouse=True)
+    def _path(self):
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        yield
+        try: sys.path.remove(str(SCRIPTS_DIR))
+        except ValueError: pass
+
+    def test_extract_pair_text_only(self):
+        from quality_filter import _extract_pair
+        row = {"messages": [
+            {"role": "user", "content": "What is COBOL?"},
+            {"role": "assistant", "content": "COBOL is a programming language."},
+        ]}
+        user, response, is_tool = _extract_pair(row)
+        assert user == "What is COBOL?"
+        assert response == "COBOL is a programming language."
+        assert is_tool is False
+
+    def test_extract_pair_tool_only_row(self):
+        from quality_filter import _extract_pair
+        row = {"messages": [
+            {"role": "user", "content": "look it up"},
+            {"role": "assistant", "tool_calls": [{"function": {"name": "search"}}]},
+        ]}
+        user, response, is_tool = _extract_pair(row)
+        assert user == "look it up"
+        assert is_tool is True
+
+    def test_extract_pair_handles_missing_assistant(self):
+        from quality_filter import _extract_pair
+        row = {"messages": [{"role": "user", "content": "hi"}]}
+        user, response, is_tool = _extract_pair(row)
+        assert user == "hi"
+        assert response == ""
+        assert is_tool is False
+
+
+class TestContentSafetyCheck:
+    """Unit tests for content_safety_check helpers (network mocked)."""
+
+    @pytest.fixture(autouse=True)
+    def _path(self):
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        yield
+        try: sys.path.remove(str(SCRIPTS_DIR))
+        except ValueError: pass
+
+    def test_script_help(self):
+        result = subprocess.run(
+            [sys.executable, str(SCRIPTS_DIR / "content_safety_check.py"), "--help"],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0
+        for flag in ["--jsonl", "--endpoint", "--api-key", "--threshold", "--drop-out"]:
+            assert flag in result.stdout, f"content_safety_check.py missing {flag}"
+
+    def test_extract_text_concatenates_messages(self):
+        # content_safety_check has a helper that pulls all messages' text content
+        # for scoring. Verify it tolerates rows without content (tool-call rows).
+        import content_safety_check as cs
+        if hasattr(cs, "_row_text"):
+            row = {"messages": [
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "hi"},
+                {"role": "assistant", "tool_calls": [{"function": {"name": "x"}}]},
+            ]}
+            text = cs._row_text(row)
+            assert "hello" in text and "hi" in text
+
+
 # ── Cost Estimation ──────────────────────────────────────────────────────
 
 class TestCostEstimation:

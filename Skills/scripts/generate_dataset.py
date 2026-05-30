@@ -94,8 +94,7 @@ from common import HelpOnErrorParser  # noqa: E402
 
 import requests  # noqa: E402
 
-# REST defaults (path/api-version/audience verified live against
-# foundrysdk-eastus-resource and cont-learning-faos on 2026-05-28)
+# REST defaults for the Foundry Data Generation API.
 REST_API_VERSION = "v1"
 REST_AAD_SCOPE = "https://ai.azure.com/.default"
 REST_FOUNDRY_FEATURES = "DataGenerationJobs=V1Preview"

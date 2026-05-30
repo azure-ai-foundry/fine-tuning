@@ -6,9 +6,9 @@ Live tests (marked `@pytest.mark.live`) hit the real Foundry API and require:
   - At least one chat model deployed at the project
 
 Optional overrides:
-  - `FOUNDRY_TEACHER_MODEL`    (default: gpt-4.1)
-  - `FOUNDRY_AGENT_NAME`       (default: demo1-retail-agent-langraph-responses)
-  - `FOUNDRY_AGENT_VERSION`    (default: 5)
+  - `FOUNDRY_TEACHER_MODEL`    (default: gpt-4.1-mini)
+  - `FOUNDRY_AGENT_NAME`       (required for agent/traces backend tests)
+  - `FOUNDRY_AGENT_VERSION`    (required for traces backend tests)
   - `SKIP_LIVE_E2E=1`          (skip all live tests)
   - `E2E_POLL_INTERVAL`        (seconds between job polls; default 10)
   - `E2E_JOB_TIMEOUT`          (seconds; default 600)
@@ -35,11 +35,12 @@ if hasattr(sys.stdout, "reconfigure"):
 TESTS_DIR = pathlib.Path(__file__).resolve().parent
 FIXTURES_DIR = TESTS_DIR / "fixtures"
 
-# Default test target — known-good project with a hosted agent that has traffic + tools.
-DEFAULT_ENDPOINT = "https://REDACTED-FOUNDRY-RESOURCE.services.ai.azure.com/api/projects/REDACTED-FOUNDRY-PROJECT"
-DEFAULT_AGENT_NAME = "demo1-retail-agent-langraph-responses"
-DEFAULT_AGENT_VERSION = "5"
-DEFAULT_TEACHER = "gpt-4.1"
+# Live-test defaults come from environment. Set FOUNDRY_PROJECT_ENDPOINT to point at
+# your AI project; FOUNDRY_AGENT_NAME/VERSION are only needed for agent/traces tests.
+DEFAULT_ENDPOINT = os.environ.get("FOUNDRY_PROJECT_ENDPOINT", "")
+DEFAULT_AGENT_NAME = os.environ.get("FOUNDRY_AGENT_NAME", "")
+DEFAULT_AGENT_VERSION = os.environ.get("FOUNDRY_AGENT_VERSION", "")
+DEFAULT_TEACHER = os.environ.get("FOUNDRY_TEACHER_MODEL", "gpt-4.1-mini")
 
 
 # ── pytest config ────────────────────────────────────────────────────────

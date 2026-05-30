@@ -119,7 +119,7 @@ Output is chat-format JSONL ready for fine-tuning:
 {"messages": [{"role": "system", "content": "You are a helpful assistant. You will be presented with a question, please provide a clear and accurate answer."}, {"role": "user", "content": "How long do I have to return an item?"}, {"role": "assistant", "content": "Standard items can be returned within 30 days of delivery..."}]}
 ```
 
-**Observed throughput** (cont-learning-faos, gpt-4.1-mini teacher, 2 KB prompt): **15 samples in ~70s**.
+**Observed throughput** (gpt-4.1-mini teacher, 2 KB prompt): **15 samples in ~70s**.
 
 ### Large corpus / PDF → upload first, then File source
 
@@ -190,7 +190,7 @@ dataset = project_client.datasets.get(name=ds_out.name, version=ds_out.version)
 print(f"Eval dataset id: {dataset.id}")
 ```
 
-**Observed throughput** (cont-learning-faos, gpt-4.1-mini, 2 KB prompt): **15 samples in ~250s** — EVAL is significantly slower than SFT because the service also produces a candidate response for each query.
+**Observed throughput** (gpt-4.1-mini, 2 KB prompt): **15 samples in ~250s** — EVAL is significantly slower than SFT because the service also produces a candidate response for each query.
 
 ## Recipe 2 — Tool-calling SFT from an OpenAPI 3.0 spec
 
