@@ -88,6 +88,28 @@ This directory contains cookbooks demonstrating various fine-tuning techniques o
 **Products/SDKs**: Microsoft Foundry, Azure AI Projects SDK  
 **What it shows**: Upload datasets, create SFT job, monitor training, deploy model, and test medical summarization
 
+### [SyntheticDatagen-DocQnA](SyntheticDatagen-DocQnA/)
+**Technique**: Supervised Fine-Tuning (SFT) with Synthetic Data Generation  
+**Use Case**: Q&A models for a reference document (PDF or markdown)  
+**Dataset**: Synthetic Q&A pairs generated from your document via Foundry's Data Generation API  
+**Products/SDKs**: Microsoft Foundry, Azure OpenAI API, Foundry Data Generation API, Azure AI Evaluation SDK  
+**What it shows**: Convert PDF to text, chunk a large source to maximize question coverage, generate Q&A with the `SimpleQnA` recipe, LLM-judge quality filter, fine-tune a small student with conservative hyperparameters, and report honest lift vs baseline (with diagnostic next-steps if SFT doesn't help)
+
+### [SyntheticDatagen-ToolUse](SyntheticDatagen-ToolUse/)
+**Technique**: Supervised Fine-Tuning (SFT) with Synthetic Data Generation  
+**Use Case**: Tool-calling assistants — teach a small model to call your tool catalog correctly  
+**Dataset**: Synthetic tool-calling examples generated from an OpenAPI 3.0 spec via Foundry's Data Generation API  
+**Products/SDKs**: Microsoft Foundry, Azure OpenAI API, Foundry Data Generation API, Azure AI Evaluation SDK  
+**What it shows**: Convert OpenAI tools array to OpenAPI 3.0, generate tool-use examples with the `ToolUseFineTuning` recipe, fine-tune a small student, and evaluate with **structural tool-call comparison** (tool name + arguments match)
+
+### [TracesDistillation](TracesDistillation/)
+**Technique**: Knowledge Distillation via SFT on Real Traces  
+**Use Case**: Distill a deployed Foundry hosted agent's tool-using behavior into a smaller, cheaper student model  
+**Dataset**: Real production conversation traces from your deployed agent (no labeling required)  
+**Products/SDKs**: Microsoft Foundry, Azure OpenAI API, App Insights, Foundry Data Generation API, Azure AI Evaluation SDK  
+**What it shows**: Pull traces from App Insights via the `Traces` recipe, apply a 5-step inline transform that fixes Foundry's trace export for Azure FT preprocessing, fine-tune a small student on real production traffic, and evaluate with structural tool-call comparison
+
+
 ### [Video_FT_Action_Recognition](Video_FT_Action_Recognition/)
 **Technique**: Vision Fine-Tuning  
 **Use Case**: Human action recognition in video clips  

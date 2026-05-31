@@ -1,6 +1,6 @@
 # Fine-Tuning in AI Foundry
 
-This repository contains **13 end-to-end demos** and **sample datasets** for fine-tuning models on [Azure AI Foundry](http://ai.azure.com/). Use this repo to explore practical fine-tuning workflows and access ready-to-use data for your own projects.
+This repository contains **16 end-to-end demos** and **sample datasets** for fine-tuning models on [Azure AI Foundry](http://ai.azure.com/). Use this repo to explore practical fine-tuning workflows and access ready-to-use data for your own projects.
 
 ## 📋 Table of Contents
 
@@ -48,6 +48,9 @@ Explore end-to-end fine-tuning experiences in the **[Demos](Demos/)** folder:
 | [ZavaRetailAgent](Demos/ZavaRetailAgent/) | SFT + RFT | Retail customer service agent | ⭐⭐⭐ Advanced |
 | [Agentic_RFT_PrivatePreview](Demos/Agentic_RFT_PrivatePreview/) | RFT | Agentic workflows with tools | ⭐⭐⭐ Advanced |
 | [Evaluation](Demos/Evaluation/) | Evaluation | Multimodal model evaluation | ⭐⭐ Intermediate |
+| [SyntheticDatagen-DocQnA](Demos/SyntheticDatagen-DocQnA/) | SFT + Synthetic Datagen | Q&A from a reference document (PDF/MD) | ⭐⭐ Intermediate |
+| [SyntheticDatagen-ToolUse](Demos/SyntheticDatagen-ToolUse/) | SFT + Synthetic Datagen | Tool-calling assistants from a tool spec | ⭐⭐ Intermediate |
+| [TracesDistillation](Demos/TracesDistillation/) | Distillation + Traces | Distill a deployed agent from real production traces | ⭐⭐⭐ Advanced |
 
 👉 See **[Demos/README.md](Demos/README.md)** for detailed descriptions of each demo.
 
