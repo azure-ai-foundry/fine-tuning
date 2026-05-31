@@ -2,10 +2,9 @@
 """Chunk a large source text and run parallel Foundry datagen jobs per chunk.
 
 The Foundry Data Generation API's `SimpleQnA` recipe saturates at ~100-150
-unique Q&A pairs per source file (verified live: 1.4MB text → 90 pairs at
-max-samples=1000, then 122 pairs at max-samples=500). The teacher
-deduplicates aggressively against the source content, so asking for more
-samples doesn't yield more when the source is "covered".
+unique Q&A pairs per source file, because the teacher self-deduplicates
+aggressively against the source content. Asking for more samples in a single
+job doesn't yield more once the source is "covered".
 
 Chunking the source into N pieces and running N parallel jobs multiplies
 the effective output: 10 chunks × ~100 pairs each ≈ 1000 unique pairs.
@@ -112,6 +111,10 @@ def _run_one_datagen(args, file_id: str, chunk_idx: int, out_dir: Path) -> Path 
     ]
     if args.project_endpoint:
         cmd += ["--project-endpoint", args.project_endpoint]
+    if args.base_url:
+        cmd += ["--base-url", args.base_url]
+    if args.api_key:
+        cmd += ["--api-key", args.api_key]
 
     # Run from out_dir so --download writes there
     print(f"  [chunk {chunk_idx}] submitting datagen (file_id={file_id[-12:]})...", flush=True)
@@ -119,6 +122,7 @@ def _run_one_datagen(args, file_id: str, chunk_idx: int, out_dir: Path) -> Path 
         cmd, cwd=out_dir,
         capture_output=True, text=True,
         encoding="utf-8", errors="replace",
+        timeout=1800,
     )
     if r.returncode != 0:
         print(f"  [chunk {chunk_idx}] FAILED rc={r.returncode}: {(r.stderr or '')[-300:]}", flush=True)

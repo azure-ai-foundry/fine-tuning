@@ -2600,9 +2600,10 @@ def cmd_review(args):
                 if base_url_dd: dd_cmd += ["--base-url", base_url_dd]
                 if project_dd: dd_cmd += ["--project-endpoint", project_dd]
                 if api_key_dd: dd_cmd += ["--api-key", api_key_dd]
-                subprocess.run(dd_cmd, capture_output=False)
+                subprocess.run(dd_cmd, capture_output=False, timeout=300)
                 if os.path.exists(dd_out):
-                    deep_diagnosis = json.load(open(dd_out, encoding="utf-8"))
+                    with open(dd_out, encoding="utf-8") as _dd_f:
+                        deep_diagnosis = json.load(_dd_f)
             else:
                 print("\n  ⚠️  --deep-diagnose requested but no base-url/api-key — skipped.")
         except Exception as dd_err:
