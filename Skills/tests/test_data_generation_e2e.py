@@ -49,7 +49,8 @@ def test_deployments_include_chat_model(project_client, teacher_model):
 @pytest.mark.slow
 def test_simpleqna_sft_from_file(project_client, aoai_client, teacher_model,
                                   fixtures_dir, poll_interval, job_timeout):
-    """Upload COBOL_Wikipedia.pdf, generate SFT JSONL via SimpleQnA + File source.
+    """Upload a small COBOL primer (markdown) and generate SFT JSONL via
+    SimpleQnA + File source.
 
     Asserts:
       - Job reaches SUCCEEDED
@@ -64,8 +65,8 @@ def test_simpleqna_sft_from_file(project_client, aoai_client, teacher_model,
         FileDataGenerationJobSource, SimpleQnADataGenerationJobOptions,
     )
 
-    pdf_path = fixtures_dir / "COBOL_Wikipedia.pdf"
-    assert pdf_path.exists(), f"Missing fixture {pdf_path}"
+    source_path = fixtures_dir / "cobol_intro.md"
+    assert source_path.exists(), f"Missing fixture {source_path}"
 
     run_id = make_run_id()
     output_name = f"e2e-qna-sft-file-{run_id}"[:50]
@@ -73,10 +74,10 @@ def test_simpleqna_sft_from_file(project_client, aoai_client, teacher_model,
     job = None
     seed_file = None
     try:
-        # Upload PDF
-        with open(pdf_path, "rb") as f:
+        # Upload the source text. user_data accepts text and markdown directly.
+        with open(source_path, "rb") as f:
             seed_file = aoai_client.files.create(
-                file=(pdf_path.name, f), purpose="user_data",
+                file=(source_path.name, f), purpose="user_data",
             )
         # Wait for processing
         import time as _t
@@ -92,7 +93,7 @@ def test_simpleqna_sft_from_file(project_client, aoai_client, teacher_model,
             name=output_name,
             scenario=DataGenerationJobScenario.SUPERVISED_FINETUNING,
             sources=[FileDataGenerationJobSource(
-                id=seed_file.id, description="COBOL Wikipedia article (e2e test)",
+                id=seed_file.id, description="COBOL primer (e2e test fixture)",
             )],
             options=SimpleQnADataGenerationJobOptions(
                 max_samples=15,
