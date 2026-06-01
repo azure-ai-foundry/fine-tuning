@@ -88,13 +88,6 @@ This directory contains cookbooks demonstrating various fine-tuning techniques o
 **Products/SDKs**: Microsoft Foundry, Azure AI Projects SDK  
 **What it shows**: Upload datasets, create SFT job, monitor training, deploy model, and test medical summarization
 
-### [SyntheticDatagen-DocQnA](SyntheticDatagen-DocQnA/)
-**Technique**: Supervised Fine-Tuning (SFT) with Synthetic Data Generation  
-**Use Case**: Q&A models for a reference document (PDF or markdown)  
-**Dataset**: Synthetic Q&A pairs generated from your document via Foundry's Data Generation API  
-**Products/SDKs**: Microsoft Foundry, Azure OpenAI API, Foundry Data Generation API, Azure AI Evaluation SDK  
-**What it shows**: Convert PDF to text, chunk a large source to maximize question coverage, generate Q&A with the `SimpleQnA` recipe, LLM-judge quality filter, fine-tune a small student with conservative hyperparameters, and report honest lift vs baseline (with diagnostic next-steps if SFT doesn't help)
-
 ### [SyntheticDatagen-ToolUse](SyntheticDatagen-ToolUse/)
 **Technique**: Supervised Fine-Tuning (SFT) with Synthetic Data Generation  
 **Use Case**: Tool-calling assistants — teach a small model to call your tool catalog correctly  
