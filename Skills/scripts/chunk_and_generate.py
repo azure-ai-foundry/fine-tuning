@@ -113,8 +113,10 @@ def _run_one_datagen(args, file_id: str, chunk_idx: int, out_dir: Path) -> Path 
         cmd += ["--project-endpoint", args.project_endpoint]
     if args.base_url:
         cmd += ["--base-url", args.base_url]
+    # SECURITY: api-key flows via env, not CLI args (which are visible to `ps`).
+    sub_env = os.environ.copy()
     if args.api_key:
-        cmd += ["--api-key", args.api_key]
+        sub_env["AZURE_OPENAI_API_KEY"] = args.api_key
 
     # Run from out_dir so --download writes there
     print(f"  [chunk {chunk_idx}] submitting datagen (file_id={file_id[-12:]})...", flush=True)
@@ -123,6 +125,7 @@ def _run_one_datagen(args, file_id: str, chunk_idx: int, out_dir: Path) -> Path 
         capture_output=True, text=True,
         encoding="utf-8", errors="replace",
         timeout=1800,
+        env=sub_env,
     )
     if r.returncode != 0:
         print(f"  [chunk {chunk_idx}] FAILED rc={r.returncode}: {(r.stderr or '')[-300:]}", flush=True)

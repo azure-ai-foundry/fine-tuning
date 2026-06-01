@@ -168,6 +168,31 @@ class HelpOnErrorParser(argparse.ArgumentParser):
         self.exit(2, f"\nerror: {message}\n")
 
 
+def find_az_cli() -> str:
+    """Locate the Azure CLI executable. Returns path string suitable for subprocess.
+
+    Resolution order:
+      1. AZ_CLI_PATH env var (explicit override)
+      2. shutil.which("az") (PATH lookup)
+      3. Common Windows install locations
+      4. Fall back to "az" (assumes it's on PATH; subprocess will fail with a useful error)
+    """
+    import shutil
+    explicit = os.environ.get("AZ_CLI_PATH")
+    if explicit and os.path.exists(explicit):
+        return explicit
+    found = shutil.which("az")
+    if found:
+        return found
+    for candidate in (
+        r"C:\Program Files (x86)\Microsoft SDKs\Azure\CLI2\wbin\az.cmd",
+        r"C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin\az.cmd",
+    ):
+        if os.path.exists(candidate):
+            return candidate
+    return "az"
+
+
 def _make_token_provider():
     """Create an auto-refreshing AAD token provider for long-running scripts.
     

@@ -67,6 +67,7 @@ Reusable Python scripts in `scripts/`. Each is self-contained with inline docume
 | Script | Purpose |
 |--------|---------|
 | `auto_finetune.py` | **Autonomous orchestrator (experimental, SFT only)** — runs the full loop: analyze → generate → prepare → baseline → train → evaluate → review → iterate. Good for exploration; use individual scripts for production workflows or RFT. |
+| `auto_rft.py` | **Autonomous RFT orchestrator (experimental)** — full loop for reinforcement fine-tuning: validate → prepare → calibrate → baseline → submit → monitor → evaluate → iterate. Use this for RFT; use `auto_finetune.py` for SFT. |
 | `submit_training.py` | Submit SFT, DPO, or RFT jobs (SDK + REST fallback) |
 | `monitor_training.py` | Poll a running job until completion, streaming events in real time |
 | `generate_dataset.py` | Generate fine-tuning or eval data via the Foundry Data Generation API (preview) — traces → SFT/eval, doc → Q&A, OpenAPI spec → tool-use. SDK + REST modes. Also includes `--tools-from`/`--tools-to-openapi-out` converter for OpenAI tool-spec → OpenAPI 3.0. |

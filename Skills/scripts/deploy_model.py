@@ -40,19 +40,9 @@ DEFAULT_RG = os.environ.get("AZURE_RESOURCE_GROUP", "")
 DEFAULT_ACCOUNT = os.environ.get("AZURE_COGSERVICES_ACCOUNT", "")
 AZ_CLI = os.environ.get("AZ_CLI_PATH")
 if not AZ_CLI:
-    import shutil
-    AZ_CLI = shutil.which("az")
-    if not AZ_CLI:
-        # Common Windows paths
-        for candidate in [
-            r"C:\Program Files (x86)\Microsoft SDKs\Azure\CLI2\wbin\az.cmd",
-            r"C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin\az.cmd",
-        ]:
-            if os.path.exists(candidate):
-                AZ_CLI = candidate
-                break
-    if not AZ_CLI:
-        AZ_CLI = "az"  # last resort, hope it's on PATH
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from common import find_az_cli
+    AZ_CLI = find_az_cli()
 
 # Model format auto-detection rules
 FORMAT_RULES = [

@@ -2049,19 +2049,9 @@ def _cleanup_eval_deployments(sub, rg, account, keep_names=None):
         time.sleep(30)
 
 def _find_az_cli():
-    """Find the Azure CLI executable."""
-    import shutil
-    az = shutil.which("az")
-    if az:
-        return az
-    # Common Windows paths
-    for candidate in [
-        r"C:\Program Files (x86)\Microsoft SDKs\Azure\CLI2\wbin\az.cmd",
-        r"C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin\az.cmd",
-    ]:
-        if os.path.exists(candidate):
-            return candidate
-    return "az"
+    """DEPRECATED: kept as a shim — use common.find_az_cli() instead."""
+    from common import find_az_cli
+    return find_az_cli()
 
 
 def _detect_azure_resource(base_url=None):
@@ -2597,10 +2587,13 @@ def cmd_review(args):
                           "--work-dir", work_dir_dd,
                           "--judge", judge,
                           "--out", dd_out]
+                # Endpoints can flow via CLI args (they aren't secrets), but the api-key
+                # must travel via env so it doesn't show up in process listings.
                 if base_url_dd: dd_cmd += ["--base-url", base_url_dd]
                 if project_dd: dd_cmd += ["--project-endpoint", project_dd]
-                if api_key_dd: dd_cmd += ["--api-key", api_key_dd]
-                subprocess.run(dd_cmd, capture_output=False, timeout=300)
+                dd_env = os.environ.copy()
+                dd_env["AZURE_OPENAI_API_KEY"] = api_key_dd
+                subprocess.run(dd_cmd, capture_output=False, timeout=300, env=dd_env)
                 if os.path.exists(dd_out):
                     with open(dd_out, encoding="utf-8") as _dd_f:
                         deep_diagnosis = json.load(_dd_f)
@@ -2949,7 +2942,8 @@ def cmd_auto(args):
     )
     cmd_analyze(analyze_args)
 
-    spec = json.load(open(task_spec_path, encoding="utf-8"))
+    with open(task_spec_path, encoding="utf-8") as _f:
+        spec = json.load(_f)
     data_mode = spec.get("data_mode", "labeled")
 
     # ── Phase 2: GENERATE (if no data, unlabeled, or prompt-only) ──
@@ -3077,15 +3071,17 @@ def cmd_auto(args):
             print("=" * 60)
             cs_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "content_safety_check.py")
             cleaned = data_path.replace(".jsonl", ".safe.jsonl")
+            # SECURITY: api-key via env, not CLI args.
+            cs_env = os.environ.copy()
+            cs_env["AZURE_CONTENT_SAFETY_KEY"] = cs_key
             cmd = [
                 sys.executable, cs_script,
                 "--jsonl", data_path,
                 "--endpoint", cs_endpoint,
-                "--api-key", cs_key,
                 "--threshold", str(cs_threshold),
                 "--drop-out", cleaned,
             ]
-            r = subprocess.run(cmd, capture_output=False)
+            r = subprocess.run(cmd, capture_output=False, env=cs_env)
             if r.returncode in (0, 1) and os.path.exists(cleaned):
                 # rc=1 means some rows were flagged but a clean file was written
                 print(f"\n  Using cleaned data for downstream phases: {cleaned}")
@@ -3113,18 +3109,21 @@ def cmd_auto(args):
             qf_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quality_filter.py")
             filtered = data_path.replace(".jsonl", ".qualityfilter.jsonl")
             qf_report = data_path.replace(".jsonl", ".qualityfilter.json")
+            # SECURITY: pass api-key via env, NOT as a CLI arg. CLI args are visible
+            # to anyone running `ps`/process monitoring on the host.
+            qf_env = os.environ.copy()
+            qf_env["AZURE_OPENAI_API_KEY"] = api_key_for_judge
+            qf_env["OPENAI_BASE_URL"] = base_url_for_judge
             cmd = [
                 sys.executable, qf_script,
                 "--jsonl", data_path,
                 "--drop-out", filtered,
                 "--report", qf_report,
-                "--base-url", base_url_for_judge,
-                "--api-key", api_key_for_judge,
                 "--judge", qf_judge,
                 "--threshold", str(qf_threshold),
                 "--concurrency", str(qf_concurrency),
             ]
-            r = subprocess.run(cmd, capture_output=False)
+            r = subprocess.run(cmd, capture_output=False, env=qf_env)
             if r.returncode in (0, 1) and os.path.exists(filtered):
                 print(f"\n  Using quality-filtered data for downstream phases: {filtered}")
                 data_path = filtered
@@ -3154,7 +3153,8 @@ def cmd_auto(args):
     )
     cmd_baseline(baseline_args)
 
-    baseline = json.load(open(baseline_path, encoding="utf-8"))
+    with open(baseline_path, encoding="utf-8") as _f:
+        baseline = json.load(_f)
     base_score = baseline.get("combined", 0)
 
     # Check headroom
@@ -3186,7 +3186,8 @@ def cmd_auto(args):
         cmd_candidates(cand_args)
 
         # Check for data augmentation recommendations
-        plan = json.load(open(plan_path, encoding="utf-8"))
+        with open(plan_path, encoding="utf-8") as _f:
+            plan = json.load(_f)
 
         # ── Baseline any alt models not yet baselined ──
         candidate_models = set(c["model"] for c in plan.get("candidates", []))
@@ -3197,7 +3198,8 @@ def cmd_auto(args):
             client_bl, _ = get_clients(
                 base_url=args.base_url, project_endpoint=args.project_endpoint, api_key=args.api_key
             )
-            rubric_bl = json.load(open(task_spec_path, encoding="utf-8")).get("eval_rubric", {})
+            with open(task_spec_path, encoding="utf-8") as _f:
+                rubric_bl = json.load(_f).get("eval_rubric", {})
             judge_bl = rubric_bl.get("judge_model", "gpt-4o")
             with open(test_file, encoding="utf-8") as f:
                 test_bl = [json.loads(line) for line in f if line.strip()]
@@ -3281,7 +3283,8 @@ def cmd_auto(args):
         cmd_review(rev_args)
 
         # Read the decision
-        review = json.load(open(review_path, encoding="utf-8"))
+        with open(review_path, encoding="utf-8") as _f:
+            review = json.load(_f)
         decision = review.get("decision", "STOP")
         review_file = review_path
 
@@ -3307,7 +3310,8 @@ def cmd_auto(args):
     print(f"  ⏹️ COMPLETED {max_iterations} iterations without meeting threshold")
     print("=" * 60)
     if review_file:
-        review = json.load(open(review_file, encoding="utf-8"))
+        with open(review_file, encoding="utf-8") as _f:
+            review = json.load(_f)
         _print_auto_summary(work_dir, max_iterations, review, baseline)
 
 

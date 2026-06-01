@@ -187,6 +187,32 @@ class TestSkillConsistency:
             full_path = SKILLS_DIR / doc_path
             assert full_path.exists(), f"SKILL.md references {ref} but file doesn't exist"
 
+    def test_every_script_is_documented_in_skill_md(self):
+        """Every .py script in scripts/ must be named in SKILL.md.
+
+        Catches orphan scripts that exist on disk but aren't discoverable
+        from the skill's entry-point doc. Skips common.py (shared helper,
+        no user-facing CLI) and the __init__.py module marker.
+        """
+        excluded = {"common.py", "__init__.py"}
+        skip_dirs = {"validate"}  # validators are documented as a category
+        undocumented = []
+        for py in (SCRIPTS_DIR.glob("*.py")):
+            if py.name in excluded:
+                continue
+            if py.name not in self.skill_content:
+                undocumented.append(py.name)
+        # Validators are documented as a section header, not individually
+        for py in (SCRIPTS_DIR / "validate").glob("*.py"):
+            if py.name in excluded:
+                continue
+            if py.name not in self.skill_content:
+                undocumented.append(f"validate/{py.name}")
+        assert not undocumented, (
+            f"Scripts exist but are not named in SKILL.md: {undocumented}. "
+            f"Add them to the Scripts table or move/delete them."
+        )
+
 
 # ── Auto-Finetune CLI ────────────────────────────────────────────────────
 

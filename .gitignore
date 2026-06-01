@@ -14,3 +14,9 @@ Skills/smoke*.log
 Skills/af-traces-*.jsonl
 # Local monitor utility (not part of skill)
 Skills/check_runs.ps1
+
+
+# Datagen experiment artifacts
+Skills/test_chunked/
+Skills/test_cobol_full_dataset/
+Skills/test_probe_*/
