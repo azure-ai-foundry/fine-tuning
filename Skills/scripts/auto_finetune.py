@@ -40,8 +40,10 @@ import hashlib
 import json
 import os
 import random
+import requests
 import sys
 import time
+import uuid
 
 # Fix Windows console encoding (cp1252 can't handle Unicode arrows/emoji)
 if sys.platform == "win32":
@@ -94,6 +96,20 @@ def _resolve_tier(model_id, requested_tier):
                   f"(requested '{requested_tier}'). Overriding to globalStandard.")
         return "globalStandard"
     return requested_tier
+
+
+def _parse_tiers(tier_arg):
+    """Parse the --tier flag value into a list of tiers for round-robin assignment.
+
+    Accepts a single tier ('globalStandard') or comma-separated list
+    ('globalStandard,developerTier'). Returns a non-empty list of strings.
+    Used to distribute candidates across tiers when capacity on one is
+    constrained.
+    """
+    if not tier_arg:
+        return ["globalStandard"]
+    tiers = [t.strip() for t in tier_arg.split(",") if t.strip()]
+    return tiers or ["globalStandard"]
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
@@ -527,7 +543,7 @@ def cmd_generate(args):
                     ex = json.loads(line)
                     existing_examples.append(ex)
                     # Extract user content as dedup key
-                    user_msg = next((m["content"] for m in ex.get("messages", []) if m["role"] == "user"), "")
+                    user_msg = next((m.get("content") or "" for m in ex.get("messages", []) if m.get("role") == "user"), "")
                     existing_inputs.add(user_msg.lower().strip()[:200])
         print(f"  Loaded {len(existing_examples)} existing examples for deduplication")
 
@@ -724,6 +740,224 @@ def cmd_generate(args):
     print(f"\n  Output: {output_path} ({len(merged)} total examples{', ' + str(len(chat_examples)) + ' new' if existing_examples else ''})")
     print(f"  Raw scores: {raw_path}")
     print(f"\n  Next: auto_finetune.py prepare --task-spec {args.task_spec} --data {output_path}")
+
+
+# ── Phase 2 alternative: FOUNDRY-GENERATE (Foundry Data Generation API) ──
+
+def cmd_foundry_generate(args):
+    """Generate training/eval data via the Foundry Data Generation API.
+
+    Alternative to `cmd_generate` (which runs a custom teacher loop locally).
+    Use this when:
+      - You want to generate from real agent traces (--source traces)
+      - You want tool-calling SFT data from an OpenAPI 3.0 spec (--source file
+        --recipe tool-use)
+      - You want an evaluation dataset (--scenario eval)
+      - You want the service to handle quality control instead of the in-script scorer
+
+    See workflows/synthetic-datagen.md and references/data-generation-api.md
+    for the full API.
+
+    Output is normalised to <output-dir>/generated_data.jsonl so the rest of
+    the auto_finetune pipeline (prepare/baseline/candidates/etc.) just works.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+
+    if not args.project_endpoint:
+        sys.exit("--project-endpoint required (or set AZURE_AI_PROJECT_ENDPOINT) for Foundry data generation")
+
+    with open(args.task_spec, encoding="utf-8") as f:
+        spec = json.load(f)
+
+    task_name = spec.get("task_name", "task")
+    description = spec.get("description", "")
+
+    output_dir = os.path.abspath(args.output_dir)
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Generate a short, unique output name (Foundry caps at 50 chars; needs [a-z0-9-])
+    run_id = uuid.uuid4().hex[:8]
+    short_task = "".join(c if c.isalnum() or c == "-" else "-" for c in task_name.lower())[:25].strip("-")
+    output_name = f"af-{short_task}-{run_id}"[:50]
+
+    script = os.path.join(os.path.dirname(__file__), "generate_dataset.py")
+    if not os.path.exists(script):
+        sys.exit(f"generate_dataset.py not found at {script}")
+
+    cmd = [
+        sys.executable, script,
+        "--project-endpoint", args.project_endpoint,
+        "--source", args.source,
+        "--recipe", args.recipe,
+        "--scenario", args.scenario,
+        "--max-samples", str(args.max_samples),
+        "--output-name", output_name,
+        "--download",
+    ]
+    if args.train_split is not None:
+        cmd += ["--train-split", str(args.train_split)]
+    if args.teacher:
+        cmd += ["--teacher", args.teacher]
+    if args.api_key:
+        # generate_dataset.py uses DefaultAzureCredential; --api-key is for OAI clients
+        pass
+
+    # Source-specific args (validated against generate_dataset.py's own argparse)
+    if args.source == "prompt-inline":
+        prompt = args.prompt or description
+        if not prompt:
+            sys.exit("--prompt or task spec 'description' required for --source prompt-inline")
+        cmd += ["--prompt", prompt[:10000]]  # service cap
+    elif args.source == "prompt-file":
+        if not args.prompt_file:
+            sys.exit("--prompt-file required for --source prompt-file")
+        cmd += ["--prompt-file", args.prompt_file]
+    elif args.source == "file":
+        if not args.file_id:
+            sys.exit("--file-id required for --source file (upload via openai.files.create first)")
+        cmd += ["--file-id", args.file_id]
+    elif args.source == "agent":
+        if not args.agent_name:
+            sys.exit("--agent-name required for --source agent")
+        cmd += ["--agent-name", args.agent_name]
+        if args.agent_version:
+            cmd += ["--agent-version", args.agent_version]
+    elif args.source == "traces":
+        if not args.agent_name:
+            sys.exit("--agent-name required for --source traces")
+        cmd += ["--agent-name", args.agent_name]
+        if args.agent_version:
+            cmd += ["--agent-version", args.agent_version]
+        if args.hours is not None:
+            cmd += ["--hours", str(args.hours)]
+
+    print(f"\n{'='*60}")
+    print(f"  FOUNDRY DATA GENERATION: {task_name}")
+    print(f"{'='*60}")
+    print(f"  Source:      {args.source}")
+    print(f"  Recipe:      {args.recipe}")
+    print(f"  Scenario:    {args.scenario}")
+    print(f"  Teacher:     {args.teacher or '(not required for traces)'}")
+    print(f"  Max samples: {args.max_samples}")
+    print(f"  Output name: {output_name}")
+    print(f"{'='*60}\n")
+
+    # Run from a temp cwd so --download lands in a known place, then merge
+    tmpdir = tempfile.mkdtemp(prefix="foundry-datagen-")
+    try:
+        result = subprocess.run(
+            cmd, cwd=tmpdir, capture_output=False, text=True,
+            encoding="utf-8", errors="replace",
+        )
+        if result.returncode != 0:
+            sys.exit(f"generate_dataset.py exited with {result.returncode}")
+
+        # Discover downloaded files
+        downloaded = sorted([
+            os.path.join(tmpdir, f) for f in os.listdir(tmpdir)
+            if f.endswith(".jsonl")
+        ])
+        if not downloaded:
+            sys.exit(f"No JSONL files downloaded to {tmpdir} — job may have produced 0 samples or a Dataset (EVAL) output")
+
+        # Merge train+valid (if both) into a single generated_data.jsonl, while
+        # normalising row-level quirks that the Foundry traces export produces and
+        # that Azure FT preprocessing rejects. Specifically:
+        #   - assistant messages with tool_calls sometimes have content="null"
+        #     (the string) — must be JSON null or empty string for FT preprocess
+        #     to accept the row.
+        # See bugs_found table (run=test_agent_run, FT preprocessing failed).
+        merged_path = os.path.join(output_dir, "generated_data.jsonl")
+        total = 0
+        normalised = 0
+        dropped_malformed = 0
+        with open(merged_path, "w", encoding="utf-8") as out:
+            for path in downloaded:
+                with open(path, encoding="utf-8") as src:
+                    for line in src:
+                        if not line.strip():
+                            continue
+                        try:
+                            row = json.loads(line)
+                            fixed_count = _normalize_for_ft(row)
+                            if fixed_count < 0:
+                                # Row is fundamentally broken (e.g. assistant
+                                # tool_call without matching tool reply). Drop it.
+                                dropped_malformed += 1
+                                continue
+                            normalised += fixed_count
+                            out.write(json.dumps(row, ensure_ascii=False) + "\n")
+                            total += 1
+                        except json.JSONDecodeError:
+                            out.write(line.rstrip("\n") + "\n")
+                            total += 1
+                shutil.copy2(path, os.path.join(output_dir, os.path.basename(path)))
+
+        print(f"\n  Merged {len(downloaded)} file(s) → {merged_path} ({total} examples)")
+        if normalised:
+            print(f"  Normalised {normalised} messages (e.g. content='null' → null) for FT compatibility")
+        if dropped_malformed:
+            print(f"  Dropped {dropped_malformed} malformed rows (asst tool_call without matching tool reply)")
+        print(f"  Source files copied to {output_dir}")
+        print(f"\n  Next: auto_finetune.py prepare --task-spec {args.task_spec} --data {merged_path}")
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def _normalize_for_ft(row: dict) -> int:
+    """Normalise a single chat-SFT row for Azure FT preprocessing acceptance.
+
+    Returns the number of messages fixed. Currently fixes:
+      - assistant messages with tool_calls that have `content: "null"` (string).
+        Azure FT rejects these rows. Convert to actual None.
+
+    Returns -1 if the row is fundamentally malformed and should be DROPPED.
+    The caller should treat negative returns as "skip this row entirely."
+
+    Drop conditions:
+      - Assistant message with tool_calls but NOT immediately followed by tool
+        reply messages with matching tool_call_id for EACH call. Foundry traces
+        sometimes export truncated turns where a tool call was issued but the
+        reply was never recorded. Azure FT rejects the whole file if any row
+        has this — so we drop the offending rows.
+    """
+    fixed = 0
+    msgs = row.get("messages", []) or []
+    for m in msgs:
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            c = m.get("content")
+            if c == "null":  # literal 4-char string from trace export bug
+                m["content"] = None
+                fixed += 1
+
+    # Sequence check: if an assistant message has tool_calls and is followed by
+    # MORE messages, then each tool_call.id must appear as tool_call_id in a
+    # subsequent tool message before the next non-tool turn. If the tool_call
+    # is the LAST message in the conversation (no follow-up), that's a valid
+    # SFT signal — the model is being trained to issue the call; what happens
+    # after is left to runtime. Drop only the truly truncated case.
+    for i, m in enumerate(msgs):
+        if m.get("role") != "assistant" or not m.get("tool_calls"):
+            continue
+        expected_ids = {tc.get("id") for tc in m["tool_calls"] if tc.get("id")}
+        if not expected_ids:
+            continue
+        following = msgs[i + 1:]
+        if not following:
+            # tool_call IS the final message — valid SFT row (model learns when to call)
+            continue
+        seen_ids = set()
+        for fm in following:
+            if fm.get("role") == "tool" and fm.get("tool_call_id"):
+                seen_ids.add(fm["tool_call_id"])
+            elif fm.get("role") in ("assistant", "user", "system"):
+                # Reached the next non-tool turn; tool replies must have come before
+                break
+        if not expected_ids.issubset(seen_ids):
+            return -1
+    return fixed
 
 
 def _build_generation_prompt(task_type, description, schema_text, target_count):
@@ -1479,8 +1713,11 @@ def cmd_execute(args):
     # Submit each candidate
     runs = []
     requested_tier = getattr(args, "tier", None) or plan.get("tier", None)
+    tier_pool = _parse_tiers(requested_tier)
+    if len(tier_pool) > 1:
+        print(f"  Tier mix: {tier_pool} (round-robin across candidates)")
 
-    for c in plan["candidates"]:
+    for cand_idx, c in enumerate(plan["candidates"]):
         print(f"\nSubmitting candidate '{c['name']}'...")
         suffix = _sanitize_name(f"{plan.get('task_name', 'auto')}-{c['name']}")
 
@@ -1493,60 +1730,72 @@ def cmd_execute(args):
                          "error": "RFT not supported by auto-finetune"})
             continue
 
-        # Resolve tier per model (OSS → globalStandard only)
-        tier = _resolve_tier(c["model"], requested_tier)
+        # Resolve tier per model+candidate (round-robin across pool; OSS forced to globalStandard)
+        chosen = tier_pool[cand_idx % len(tier_pool)]
+        tier = _resolve_tier(c["model"], chosen)
 
         try:
-            if tier and tier != "standard":
-                # Use REST API to set trainingType (SDK doesn't support it)
-                import requests
-                api_key = args.api_key or os.environ.get("AZURE_OPENAI_API_KEY")
-                base = args.base_url or os.environ.get("OPENAI_BASE_URL", "")
-                if not base or not api_key:
-                    print(f"  ⚠️  Tier '{tier}' requires REST API (--base-url + --api-key). "
-                          f"Falling back to SDK with 'standard' tier.")
-                    tier = None  # fall through to SDK path below
+            # SDK supports trainingType via extra_body. No REST fallback needed for tiers.
+            # (REST fallback is still used for OSS models that error out with
+            #  "does not support fine-tuning with Standard TrainingType".)
+            create_kwargs = dict(
+                model=c["model"],
+                training_file=train_upload.id,
+                validation_file=val_upload.id,
+                suffix=suffix,
+                method={"type": "supervised"},
+                hyperparameters={
+                    "n_epochs": c["epochs"],
+                    "learning_rate_multiplier": c["lr"],
+                },
+            )
+            if tier:
+                create_kwargs["extra_body"] = {"trainingType": tier}
 
-            if tier and tier != "standard":
-                # Strip /v1 suffix to get the raw endpoint
-                rest_endpoint = base.replace("/openai/v1", "").rstrip("/")
-                rest_url = f"{rest_endpoint}/openai/fine_tuning/jobs?api-version=2025-04-01-preview"
+            try:
+                job = client.fine_tuning.jobs.create(**create_kwargs)
+            except Exception as sdk_err:
+                msg = str(sdk_err)
+                if "does not support fine-tuning with Standard TrainingType" in msg or \
+                   ("training type" in msg.lower() and ("standard" in msg.lower() or "unsupported" in msg.lower())):
+                    # OSS model — needs explicit REST path
+                    api_key = args.api_key or os.environ.get("AZURE_OPENAI_API_KEY")
+                    base = args.base_url or os.environ.get("OPENAI_BASE_URL", "")
+                    if not base or not api_key:
+                        raise RuntimeError(
+                            f"Model '{c['model']}' rejected tier '{tier}' via SDK and REST fallback "
+                            f"is unavailable (need --base-url + --api-key). Original error: {sdk_err}"
+                        ) from sdk_err
+                    print(f"  ↩ SDK rejected for {c['model']}; retrying via REST with tier={tier}")
+                    rest_endpoint = base.replace("/openai/v1", "").rstrip("/")
+                    rest_url = f"{rest_endpoint}/openai/fine_tuning/jobs?api-version=2025-04-01-preview"
+                    body = {
+                        "model": c["model"],
+                        "training_file": train_upload.id,
+                        "validation_file": val_upload.id,
+                        "suffix": suffix,
+                        "hyperparameters": {
+                            "n_epochs": c["epochs"],
+                            "learning_rate_multiplier": c["lr"],
+                        },
+                        "trainingType": tier or "globalStandard",
+                    }
+                    resp = requests.post(rest_url, headers={"api-key": api_key, "Content-Type": "application/json"}, json=body, timeout=(10, 120))
+                    if resp.status_code not in (200, 201):
+                        try:
+                            err_msg = resp.json().get("error", {}).get("message", "Unknown error")
+                        except (ValueError, KeyError):
+                            err_msg = resp.text[:200] if resp.text else "Unknown error"
+                        raise RuntimeError(f"REST submission failed ({resp.status_code}): {err_msg}")
+                    data = resp.json()
+                    class _RESTJob:  # tiny shim
+                        def __init__(self, d): self.id = d["id"]; self.status = d.get("status", "pending")
+                    job = _RESTJob(data)
+                else:
+                    raise
 
-                body = {
-                    "model": c["model"],
-                    "training_file": train_upload.id,
-                    "validation_file": val_upload.id,
-                    "suffix": suffix,
-                    "hyperparameters": {
-                        "n_epochs": c["epochs"],
-                        "learning_rate_multiplier": c["lr"],
-                    },
-                    "trainingType": tier,
-                }
-                resp = requests.post(rest_url, headers={"api-key": api_key, "Content-Type": "application/json"}, json=body, timeout=(10, 120))
-                if resp.status_code not in (200, 201):
-                    try:
-                        err_msg = resp.json().get("error", {}).get("message", "Unknown error")
-                    except (ValueError, KeyError):
-                        err_msg = resp.text[:200] if resp.text else "Unknown error"
-                    raise RuntimeError(f"REST submission failed ({resp.status_code}): {err_msg}")
-                data = resp.json()
-                job_id = data["id"]
-                job_status = data.get("status", "pending")
-            else:
-                job = client.fine_tuning.jobs.create(
-                    model=c["model"],
-                    training_file=train_upload.id,
-                    validation_file=val_upload.id,
-                    suffix=suffix,
-                    method={"type": "supervised"},
-                    hyperparameters={
-                        "n_epochs": c["epochs"],
-                        "learning_rate_multiplier": c["lr"],
-                    },
-                )
-                job_id = job.id
-                job_status = job.status
+            job_id = job.id
+            job_status = job.status
 
             run = {
                 "candidate": c["name"],
@@ -1556,7 +1805,7 @@ def cmd_execute(args):
                 "hyperparameters": {"n_epochs": c["epochs"], "lr": c["lr"]},
                 "dataset_hash": _hash_file(train_path),
                 "fine_tuned_model": None,
-                "tier": tier or "standard",
+                "tier": tier or "service-default",
             }
             runs.append(run)
             tier_label = f" [{tier}]" if tier else ""
@@ -1800,19 +2049,9 @@ def _cleanup_eval_deployments(sub, rg, account, keep_names=None):
         time.sleep(30)
 
 def _find_az_cli():
-    """Find the Azure CLI executable."""
-    import shutil
-    az = shutil.which("az")
-    if az:
-        return az
-    # Common Windows paths
-    for candidate in [
-        r"C:\Program Files (x86)\Microsoft SDKs\Azure\CLI2\wbin\az.cmd",
-        r"C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin\az.cmd",
-    ]:
-        if os.path.exists(candidate):
-            return candidate
-    return "az"
+    """DEPRECATED: kept as a shim — use common.find_az_cli() instead."""
+    from common import find_az_cli
+    return find_az_cli()
 
 
 def _detect_azure_resource(base_url=None):
@@ -2039,58 +2278,19 @@ def cmd_evaluate(args):
 
 # ── Phase 7: REVIEW ──────────────────────────────────────────────────────
 
-# Model pricing ($/1M tokens) and median TTFT (seconds)
-MODEL_PRICING = {
-    "gpt-5.4": {"input": 2.50, "output": 15.00, "ttft": 181.2},
-    "gpt-5-4": {"input": 2.50, "output": 15.00, "ttft": 181.2},
-    "gpt-4.1-mini": {"input": 0.40, "output": 1.60, "ttft": 1.35},
-    "gpt-4.1-nano": {"input": 0.10, "output": 0.40, "ttft": 1.2},
-    "gpt-oss-20b": {"input": 0.30, "output": 0.60, "ttft": 2.0},
-    "Ministral-3B": {"input": 0.10, "output": 0.30, "ttft": 1.5},
-}
-
-# FT models inherit pricing from their base model
-def _get_model_pricing(model_id):
-    """Look up pricing for a model (handles FT model names like gpt-4.1-nano-2025-...ft-xxx)."""
-    for base, pricing in MODEL_PRICING.items():
-        if base in model_id:
-            return pricing
-    return None
-
-
-def _compute_cost_comparison(best_candidate, spec):
-    """Compare FT model cost/latency vs teacher (assume teacher is the largest model used for datagen)."""
-    ft_model = best_candidate.get("model_id", "")
-    ft_pricing = _get_model_pricing(ft_model)
-    
-    # Assume teacher is gpt-5.4 (most common for distillation)
-    teacher_pricing = MODEL_PRICING.get("gpt-5.4")
-    
-    if not ft_pricing or not teacher_pricing:
-        return None
-    
-    # Cost comparison (weighted: 60% input, 40% output as typical ratio)
-    ft_cost = ft_pricing["input"] * 0.6 + ft_pricing["output"] * 0.4
-    teacher_cost = teacher_pricing["input"] * 0.6 + teacher_pricing["output"] * 0.4
-    cost_savings = round(teacher_cost / ft_cost, 1) if ft_cost > 0 else 0
-    
-    # Latency comparison
-    latency_improvement = round(teacher_pricing["ttft"] / ft_pricing["ttft"], 0) if ft_pricing["ttft"] > 0 else 0
-    
-    # Quality comparison (FT score vs 10.0 as teacher ceiling)
-    ft_score = best_candidate.get("combined", best_candidate.get("score", 0))
-    quality_pct = round(ft_score / 10.0 * 100, 1)
-    
-    return {
-        "ft_model": ft_model,
-        "quality_pct": quality_pct,
-        "cost_savings": cost_savings,
-        "latency_improvement": int(latency_improvement),
-        "ft_input_cost": ft_pricing["input"],
-        "ft_output_cost": ft_pricing["output"],
-        "teacher_input_cost": teacher_pricing["input"],
-        "teacher_output_cost": teacher_pricing["output"],
-    }
+# NOTE: Earlier versions of this file shipped a hardcoded MODEL_PRICING dict
+# (per-model input/output $ and TTFT seconds) plus a _compute_cost_comparison
+# helper that printed "ROI vs Teacher: X% quality, Yx cheaper, Zx faster TTFT"
+# in the SHIP summary. Those numbers were FAKE:
+#   * MODEL_PRICING.ttft values were never measured anywhere — pure guesses
+#     (e.g. gpt-5.4 ttft=181.2s — wildly off from reality).
+#   * The "teacher" used for the comparison was hardcoded to gpt-5.4 regardless
+#     of which teacher was actually configured for datagen.
+#   * Pricing values would drift out of date with no warning.
+# Removed in commit <pending> to stop fabricating numbers. If you want a real
+# cost/latency comparison, measure it: run N inference calls against the FT
+# model and the teacher (or any reference model) on the same prompts and
+# record actual TTFT + token costs from the live Azure pricing page.
 
 
 def cmd_review(args):
@@ -2138,7 +2338,21 @@ def cmd_review(args):
 
     candidates = lb.get("candidates", [])
     if not candidates:
-        print(f"\n  No candidates to review.")
+        print(f"\n  No candidates to review (all training/eval failed).")
+        # Always write a review file so cmd_auto can keep going. Decision = STOP.
+        review = {
+            "iteration": lb.get("iteration", 1),
+            "best": None,
+            "lift_pct": 0.0,
+            "decision": "STOP",
+            "reason": "no_candidates",
+            "rationale": "All candidate training or evaluation runs failed; nothing to compare to baseline. Inspect runs_iter*.json for per-job error messages.",
+            "baselines": model_baselines,
+            "diagnostics": [],
+        }
+        with open(args.output, "w", encoding="utf-8") as f:
+            json.dump(review, f, indent=2)
+        print(f"  Output: {args.output}")
         return
 
     best = candidates[0]
@@ -2341,16 +2555,6 @@ def cmd_review(args):
         for i, r in enumerate(recommendations, 1):
             print(f"    {i}. {r}")
 
-    # Cost/latency comparison (if SHIP decision)
-    cost_comparison = None
-    if decision == "SHIP" and best.get("model_id"):
-        cost_comparison = _compute_cost_comparison(best, spec)
-        if cost_comparison:
-            print(f"\n  ROI vs Teacher ({spec.get('eval_rubric', {}).get('judge_model', 'gpt-5.4')}):")
-            print(f"    Quality:  {cost_comparison['quality_pct']}% of teacher")
-            print(f"    Cost:     {cost_comparison['cost_savings']}x cheaper")
-            print(f"    Latency:  {cost_comparison['latency_improvement']}x faster TTFT")
-
     # Get training example count from runs data
     train_examples = "?"
     if runs_data:
@@ -2364,6 +2568,40 @@ def cmd_review(args):
                     manifest = json.load(f)
                 train_examples = manifest.get("splits", {}).get("train", {}).get("count", "?")
 
+    # Deep diagnose on ITERATE (opt-in via --deep-diagnose or env DEEP_DIAGNOSE=1).
+    # Inspects sampled train/test rows with an LLM judge and surfaces a root-cause +
+    # concrete next-step. Costs one judge call per iteration.
+    deep_diagnosis = None
+    if decision == "ITERATE" and (getattr(args, "deep_diagnose", False) or os.environ.get("DEEP_DIAGNOSE") == "1"):
+        try:
+            import subprocess
+            judge = getattr(args, "deep_diagnose_judge", None) or spec.get("eval_rubric", {}).get("judge_model") or "gpt-4.1"
+            base_url_dd = getattr(args, "base_url", None) or os.environ.get("OPENAI_BASE_URL")
+            api_key_dd = getattr(args, "api_key", None) or os.environ.get("AZURE_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
+            project_dd = getattr(args, "project_endpoint", None) or os.environ.get("AZURE_AI_PROJECT_ENDPOINT")
+            if (base_url_dd or project_dd) and api_key_dd:
+                work_dir_dd = os.path.dirname(os.path.abspath(args.task_spec))
+                dd_out = os.path.join(work_dir_dd, f"deep_diagnosis_iter{iteration}.json")
+                dd_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "diagnose_iteration.py")
+                dd_cmd = [sys.executable, dd_script,
+                          "--work-dir", work_dir_dd,
+                          "--judge", judge,
+                          "--out", dd_out]
+                # Endpoints can flow via CLI args (they aren't secrets), but the api-key
+                # must travel via env so it doesn't show up in process listings.
+                if base_url_dd: dd_cmd += ["--base-url", base_url_dd]
+                if project_dd: dd_cmd += ["--project-endpoint", project_dd]
+                dd_env = os.environ.copy()
+                dd_env["AZURE_OPENAI_API_KEY"] = api_key_dd
+                subprocess.run(dd_cmd, capture_output=False, timeout=300, env=dd_env)
+                if os.path.exists(dd_out):
+                    with open(dd_out, encoding="utf-8") as _dd_f:
+                        deep_diagnosis = json.load(_dd_f)
+            else:
+                print("\n  ⚠️  --deep-diagnose requested but no base-url/api-key — skipped.")
+        except Exception as dd_err:
+            print(f"\n  ⚠️  Deep diagnose failed: {dd_err}")
+
     # Save review with full diagnostics
     review = {
         "iteration": iteration,
@@ -2374,8 +2612,8 @@ def cmd_review(args):
         "decision": decision,
         "candidate_diagnostics": diagnostics,
         "recommendations": recommendations,
-        "cost_comparison": cost_comparison,
         "train_examples": train_examples,
+        "deep_diagnosis": deep_diagnosis,
         "next_action": {
             "SHIP": "Deploy the winning model",
             "ITERATE": f"Design new candidates (iteration {iteration + 1}) addressing the recommendations above",
@@ -2391,6 +2629,66 @@ def cmd_review(args):
 
 # ── Shared evaluation helper ─────────────────────────────────────────────
 
+def _score_tool_calls(ref_calls, out_calls):
+    """Compare reference vs model-produced tool_calls. Returns 1-10 score.
+
+    Scoring:
+      - 10 if exact match: same set of tool names, and all arguments match exactly
+      - 8  if all tool names match but at least one arg differs
+      - 5  if half the tool names match
+      - 2  if at least one tool name matches but most don't
+      - 1  if no overlap, or model emitted no tool_calls when reference had some
+
+    Multi-call comparison uses unordered set semantics (parallel_tool_calls
+    are not order-sensitive).
+    """
+    import json as _json
+    if not ref_calls:
+        return 10 if not out_calls else 5  # ref didn't want a call; partial credit if model called anyway
+    if not out_calls:
+        return 1
+
+    def _name(c):
+        if isinstance(c, dict):
+            return ((c.get("function") or {}).get("name")) or c.get("name")
+        # SDK object
+        fn = getattr(c, "function", None)
+        return getattr(fn, "name", None) if fn else getattr(c, "name", None)
+
+    def _args(c):
+        if isinstance(c, dict):
+            raw = ((c.get("function") or {}).get("arguments")) or c.get("arguments")
+        else:
+            fn = getattr(c, "function", None)
+            raw = getattr(fn, "arguments", None) if fn else getattr(c, "arguments", None)
+        if raw is None:
+            return {}
+        if isinstance(raw, str):
+            try:
+                return _json.loads(raw)
+            except Exception:
+                return {"_raw": raw}
+        return raw
+
+    ref_names = [_name(c) for c in ref_calls]
+    out_names = [_name(c) for c in out_calls]
+    ref_set = set(ref_names)
+    out_set = set(out_names)
+    overlap = ref_set & out_set
+    if not overlap:
+        return 1
+    if ref_set != out_set:
+        # Partial name match
+        ratio = len(overlap) / len(ref_set | out_set)
+        return max(2, int(round(2 + ratio * 6)))  # 2..8 range
+
+    # All tool names match — now check args
+    ref_args_by_name = {_name(c): _args(c) for c in ref_calls}
+    out_args_by_name = {_name(c): _args(c) for c in out_calls}
+    all_args_match = all(ref_args_by_name[n] == out_args_by_name.get(n) for n in ref_names)
+    return 10 if all_args_match else 8
+
+
 def _evaluate_model_on_test(client, model, test_data, rubric, judge_model):
     """Run a model on test data and grade with LLM judge."""
     import re
@@ -2402,13 +2700,55 @@ def _evaluate_model_on_test(client, model, test_data, rubric, judge_model):
 
     all_scores = []
     errors = 0
+    skipped_tool_only = 0
+    scored_tool_calls = 0  # tool-call rows that got scored via tool-match path
 
     for i, ex in enumerate(test_data):
         msgs = ex.get("messages", [])
         # Extract system, user, reference
-        system_msgs = [m for m in msgs if m["role"] == "system"]
-        user_msg = next((m["content"] for m in msgs if m["role"] == "user"), "")
-        reference = next((m["content"] for m in msgs if m["role"] == "assistant"), "")
+        system_msgs = [m for m in msgs if m.get("role") == "system"]
+        user_msg = next((m.get("content") or "" for m in msgs if m.get("role") == "user"), "")
+        # First asst message — for tool-using traces this may have tool_calls and no content.
+        first_asst = next((m for m in msgs if m.get("role") == "assistant"), None)
+        if first_asst is None:
+            continue
+        reference = first_asst.get("content") or ""
+        ref_tool_calls = first_asst.get("tool_calls") or []
+        row_tools = ex.get("tools") or []
+
+        # Tool-call path: first asst was a tool call. Run inference WITH tools, compare tool_calls.
+        if ref_tool_calls and row_tools:
+            gen_msgs = system_msgs + [{"role": "user", "content": user_msg}]
+            try:
+                resp = client.chat.completions.create(
+                    model=model, messages=gen_msgs, tools=row_tools,
+                    temperature=0.0, max_completion_tokens=2048,
+                )
+                out_msg = resp.choices[0].message
+                out_tool_calls = getattr(out_msg, "tool_calls", None) or []
+            except Exception as e:
+                errors += 1
+                all_scores.append({d: 0 for d in dim_names})
+                if (i + 1) % 10 == 0:
+                    print(f"  [{i+1}/{len(test_data)}] (error: {e})")
+                continue
+
+            tc_score = _score_tool_calls(ref_tool_calls, out_tool_calls)
+            # Map the single tool-match score to every rubric dimension.
+            scores = {d: tc_score for d in dim_names}
+            all_scores.append(scores)
+            scored_tool_calls += 1
+            if (i + 1) % 10 == 0:
+                print(f"  [{i+1}/{len(test_data)}] scored (tool-call, match={tc_score}/10)")
+            continue
+
+        # Text path: skip if neither text nor tool_calls (degenerate row)
+        if not reference and not ref_tool_calls:
+            continue
+        # Tool-call ref but no tools array — can't replay, skip
+        if not reference and ref_tool_calls and not row_tools:
+            skipped_tool_only += 1
+            continue
 
         # Generate response
         gen_msgs = system_msgs + [{"role": "user", "content": user_msg}]
@@ -2463,12 +2803,21 @@ def _evaluate_model_on_test(client, model, test_data, rubric, judge_model):
 
     # Aggregate
     valid = [s for s in all_scores if any(v > 0 for v in s.values())]
+    if skipped_tool_only:
+        print(f"  ⚠️  Skipped {skipped_tool_only} test row(s) where the first assistant message is a tool_call but no tools[] was on the row. Cannot replay tool inference.")
+    if scored_tool_calls:
+        print(f"  ℹ️  Scored {scored_tool_calls}/{len(test_data)} test row(s) via tool-call match (tool name + arg comparison).")
+    coverage = len(valid) / len(test_data) if test_data else 0
+    if coverage < 0.5 and test_data:
+        print(f"  ⚠️  Eval coverage low: {len(valid)}/{len(test_data)} rows scored ({coverage:.0%}). Score may not be representative.")
     if not valid:
-        return {"combined": 0, "pass_rate": 0, "errors": errors, "n": len(test_data)}
+        return {"combined": 0, "pass_rate": 0, "errors": errors, "n": len(test_data),
+                "skipped_tool_only": skipped_tool_only,
+                "scored_tool_calls": scored_tool_calls}
 
     dim_avgs = {}
     for d in dim_names:
-        vals = [s[d] for s in valid if s[d] > 0]
+        vals = [s.get(d, 0) for s in valid if s.get(d, 0) > 0]
         dim_avgs[d] = sum(vals) / len(vals) if vals else 0
 
     total_weight = sum(weights.values())
@@ -2489,6 +2838,8 @@ def _evaluate_model_on_test(client, model, test_data, rubric, judge_model):
         "n_scored": len(valid),
         "n_total": len(test_data),
         "errors": errors,
+        "skipped_tool_only": skipped_tool_only,
+        "scored_tool_calls": scored_tool_calls,
     }
 
 
@@ -2503,6 +2854,42 @@ def _print_eval_results(label, model, results):
 
 
 # ── Phase AUTO: Full autopilot loop ──────────────────────────────────────
+
+def _infer_datagen_backend(args) -> str:
+    """Pick the datagen backend from the user's flags.
+
+    Resolution order:
+      1. Explicit `--datagen-backend X` (anything other than 'auto') wins.
+      2. Otherwise infer from companion flags:
+         - --datagen-file-id set                            → foundry-file
+         - --datagen-agent-name + --datagen-hours set       → foundry-traces
+         - --datagen-agent-name set (no hours)              → foundry-agent
+         - (no datagen-* hints)                             → local
+
+    Note: `--project-endpoint` alone is NOT enough to switch to Foundry. Many
+    users set AZURE_AI_PROJECT_ENDPOINT for unrelated reasons (e.g. judge
+    model deployment); routing them through Foundry datagen by accident causes
+    confusing failures like "File content is too small" (the autopilot writes
+    the short task description to a tmp file, which is under the 1 KB minimum).
+    Users must explicitly opt into Foundry via a datagen-* flag or
+    --datagen-backend foundry-prompt.
+    """
+    explicit = getattr(args, "datagen_backend", "auto")
+    if explicit and explicit != "auto":
+        return explicit
+
+    if getattr(args, "datagen_file_id", None):
+        chosen, why = "foundry-file", "--datagen-file-id set"
+    elif getattr(args, "datagen_agent_name", None) and getattr(args, "datagen_hours", None):
+        chosen, why = "foundry-traces", "--datagen-agent-name + --datagen-hours set"
+    elif getattr(args, "datagen_agent_name", None):
+        chosen, why = "foundry-agent", "--datagen-agent-name set (no --datagen-hours)"
+    else:
+        chosen, why = "local", "no datagen-* flags (use --datagen-backend foundry-prompt to opt in)"
+
+    print(f"  Datagen backend inferred: {chosen}  ({why})")
+    return chosen
+
 
 def cmd_auto(args):
     """Run the full fine-tuning loop: analyze → prepare → baseline → candidates → execute → evaluate → review → iterate."""
@@ -2555,31 +2942,193 @@ def cmd_auto(args):
     )
     cmd_analyze(analyze_args)
 
-    spec = json.load(open(task_spec_path, encoding="utf-8"))
+    with open(task_spec_path, encoding="utf-8") as _f:
+        spec = json.load(_f)
     data_mode = spec.get("data_mode", "labeled")
 
     # ── Phase 2: GENERATE (if no data, unlabeled, or prompt-only) ──
-    if data_mode in ("unlabeled", "prompt_only"):
+    backend = _infer_datagen_backend(args)
+    needs_generate = data_mode in ("unlabeled", "prompt_only")
+    if needs_generate:
         print("\n\n" + "=" * 60)
         if data_mode == "prompt_only":
-            print("  PHASE 2: GENERATE (no data file — generating from description)")
+            print(f"  PHASE 2: GENERATE  [backend={backend}]")
+            print("  (no data file — generating from description)")
         else:
-            print("  PHASE 2: GENERATE (unlabeled data detected)")
+            print(f"  PHASE 2: GENERATE  [backend={backend}]")
+            print("  (unlabeled data detected)")
         print("=" * 60)
-        gen_args = argparse.Namespace(
-            task_spec=task_spec_path, num_examples=args.num_examples,
-            teacher=args.teacher, schema_file=args.schema_file,
-            min_quality=args.min_quality, difficulty="mixed",
-            existing_data=None, output_dir=generated_dir,
-            base_url=args.base_url, api_key=args.api_key,
-            project_endpoint=args.project_endpoint,
-        )
-        cmd_generate(gen_args)
+
+        if backend == "local":
+            gen_args = argparse.Namespace(
+                task_spec=task_spec_path, num_examples=args.num_examples,
+                teacher=args.teacher, schema_file=args.schema_file,
+                min_quality=args.min_quality, difficulty="mixed",
+                existing_data=None, output_dir=generated_dir,
+                base_url=args.base_url, api_key=args.api_key,
+                project_endpoint=args.project_endpoint,
+            )
+            cmd_generate(gen_args)
+        else:
+            # foundry-* backend → delegate to cmd_foundry_generate via task_spec
+            # NOTE: prompt-inline + qna + SFT has been observed to fail fast on some
+            # projects (see references/data-generation-api.md error table). We default
+            # to prompt-file when there's no agent/file-id input so the prompt is
+            # uploaded as a user_data file under the hood (workaround for that bug).
+            src_map = {
+                "foundry-prompt": ("prompt-file",   "qna"),     # prompt-file ⇒ uploads as File internally
+                "foundry-file":   ("file",          "qna"),
+                "foundry-agent":  ("agent",         "qna"),
+                "foundry-traces": ("traces",        "traces"),
+            }
+            source, recipe = src_map[backend]
+            # Allow user override of recipe (e.g. tool-use with foundry-file when
+            # the uploaded file is an OpenAPI 3.0 spec instead of a prose document)
+            if getattr(args, "datagen_recipe", None):
+                recipe = args.datagen_recipe
+            scenario = getattr(args, "datagen_scenario", None) or "sft"
+            prompt_file_for_foundry = None
+            if source == "prompt-file":
+                # Write spec.description to a temp file so generate_dataset.py can
+                # upload it as user_data. Caller-visible artifact lives in work-dir.
+                prompt_file_for_foundry = os.path.join(work_dir, "prompt_for_foundry.md")
+                with open(prompt_file_for_foundry, "w", encoding="utf-8") as _pf:
+                    _pf.write(spec.get("description", ""))
+            fg_args = argparse.Namespace(
+                task_spec=task_spec_path, source=source, recipe=recipe, scenario=scenario,
+                max_samples=max(15, min(1000, args.num_examples)),
+                train_split=None,  # let prepare phase split
+                teacher=args.teacher,
+                prompt=None,
+                prompt_file=prompt_file_for_foundry,
+                file_id=args.datagen_file_id,
+                agent_name=args.datagen_agent_name,
+                agent_version=args.datagen_agent_version,
+                hours=(args.datagen_hours or 24) if source == "traces" else None,
+                output_dir=generated_dir,
+                base_url=args.base_url, api_key=args.api_key,
+                project_endpoint=args.project_endpoint,
+            )
+            cmd_foundry_generate(fg_args)
         data_path = os.path.join(generated_dir, "generated_data.jsonl")
     elif data_mode == "chat_sft":
         print("\n  Data is already in SFT chat format — skipping generation.")
     else:
         print(f"\n  Data mode: {data_mode} — skipping generation.")
+
+    # Phase 2a: TRACES TRANSFORM (foundry-traces backend only)
+    # The Foundry Data Generation API's "traces" recipe emits raw stitched-span
+    # JSONL that is NOT directly accepted by Azure FT preprocessing for several
+    # reasons (overlapping snapshots, content="null" strings, multiple consecutive
+    # assistant tool_calls turns, missing system+tools at row level). The helper
+    # scripts/transform_traces_jsonl.py applies all the fixes. Run it unconditionally
+    # when backend=foundry-traces, but require the caller to supply a system prompt
+    # and tools file — these can't be auto-derived from traces alone.
+    if backend == "foundry-traces" and data_path and os.path.exists(data_path):
+        sp_file = getattr(args, "traces_system_prompt_file", None)
+        tools_file = getattr(args, "traces_tools_file", None)
+        if not sp_file or not tools_file:
+            print("\n  ⚠️  --datagen-backend foundry-traces requires --traces-system-prompt-file")
+            print("     and --traces-tools-file to produce FT-ready data. Without them the")
+            print("     raw export is rejected by Azure FT preprocessing with schema(N) errors.")
+            print(f"     Proceeding with raw data anyway: {data_path}")
+        else:
+            import subprocess
+            print("\n\n" + "=" * 60)
+            print("  PHASE 2a: TRACES TRANSFORM")
+            print("=" * 60)
+            tx_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "transform_traces_jsonl.py")
+            cleaned = data_path.replace(".jsonl", ".transformed.jsonl")
+            cmd = [
+                sys.executable, tx_script,
+                "--jsonl", data_path,
+                "--system-prompt-file", sp_file,
+                "--tools-file", tools_file,
+                "--out", cleaned,
+            ]
+            r = subprocess.run(cmd, capture_output=False)
+            if r.returncode == 0 and os.path.exists(cleaned):
+                print(f"\n  Using transformed traces for downstream phases: {cleaned}")
+                data_path = cleaned
+            else:
+                print(f"\n  ⚠️  Transform failed (rc={r.returncode}); proceeding with raw {data_path}")
+
+    # Optional: Azure Content Safety pre-screen between GENERATE and PREPARE.
+    # Off by default. Use when Azure FT preprocessing has rejected your data
+    # with "User data has failed data safety check" and you want to drop the
+    # offending rows automatically. Shells out to scripts/content_safety_check.py
+    # so the helper stays a separate concern (debugging tool, not core flow).
+    if getattr(args, "content_safety_prescreen", False) and data_path and os.path.exists(data_path):
+        import subprocess
+        cs_endpoint = getattr(args, "content_safety_endpoint", None) or os.environ.get("AZURE_CONTENT_SAFETY_ENDPOINT")
+        cs_key = getattr(args, "content_safety_key", None) or os.environ.get("AZURE_CONTENT_SAFETY_KEY")
+        cs_threshold = getattr(args, "content_safety_threshold", None) or 2
+        if not cs_endpoint or not cs_key:
+            print("\n  ⚠️  --content-safety-prescreen set but AZURE_CONTENT_SAFETY_ENDPOINT/KEY unset — skipping.")
+        else:
+            print("\n\n" + "=" * 60)
+            print(f"  PHASE 2b: CONTENT SAFETY PRE-SCREEN (threshold={cs_threshold})")
+            print("=" * 60)
+            cs_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "content_safety_check.py")
+            cleaned = data_path.replace(".jsonl", ".safe.jsonl")
+            # SECURITY: api-key via env, not CLI args.
+            cs_env = os.environ.copy()
+            cs_env["AZURE_CONTENT_SAFETY_KEY"] = cs_key
+            cmd = [
+                sys.executable, cs_script,
+                "--jsonl", data_path,
+                "--endpoint", cs_endpoint,
+                "--threshold", str(cs_threshold),
+                "--drop-out", cleaned,
+            ]
+            r = subprocess.run(cmd, capture_output=False, env=cs_env)
+            if r.returncode in (0, 1) and os.path.exists(cleaned):
+                # rc=1 means some rows were flagged but a clean file was written
+                print(f"\n  Using cleaned data for downstream phases: {cleaned}")
+                data_path = cleaned
+            else:
+                print(f"\n  ⚠️  Pre-screen failed (rc={r.returncode}); proceeding with original {data_path}")
+
+    # Phase 2c: QUALITY FILTER (LLM-judge per-row)
+    # Drops generated rows that the judge scores as fragmented, blank, or off-topic.
+    # Off by default. Recommended for synthetic QnA datasets where datagen can
+    # produce truncated or refusal-style outputs that hurt downstream training.
+    if getattr(args, "quality_filter", False) and data_path and os.path.exists(data_path):
+        import subprocess
+        qf_judge = getattr(args, "quality_filter_judge", None) or "gpt-4.1-mini"
+        qf_threshold = getattr(args, "quality_filter_threshold", None) or 4
+        qf_concurrency = getattr(args, "quality_filter_concurrency", None) or 4
+        base_url_for_judge = args.base_url or os.environ.get("OPENAI_BASE_URL")
+        api_key_for_judge = args.api_key or os.environ.get("AZURE_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        if not base_url_for_judge or not api_key_for_judge:
+            print("\n  ⚠️  --quality-filter set but base-url/api-key unavailable — skipping.")
+        else:
+            print("\n\n" + "=" * 60)
+            print(f"  PHASE 2c: QUALITY FILTER (judge={qf_judge}, threshold={qf_threshold}/5)")
+            print("=" * 60)
+            qf_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quality_filter.py")
+            filtered = data_path.replace(".jsonl", ".qualityfilter.jsonl")
+            qf_report = data_path.replace(".jsonl", ".qualityfilter.json")
+            # SECURITY: pass api-key via env, NOT as a CLI arg. CLI args are visible
+            # to anyone running `ps`/process monitoring on the host.
+            qf_env = os.environ.copy()
+            qf_env["AZURE_OPENAI_API_KEY"] = api_key_for_judge
+            qf_env["OPENAI_BASE_URL"] = base_url_for_judge
+            cmd = [
+                sys.executable, qf_script,
+                "--jsonl", data_path,
+                "--drop-out", filtered,
+                "--report", qf_report,
+                "--judge", qf_judge,
+                "--threshold", str(qf_threshold),
+                "--concurrency", str(qf_concurrency),
+            ]
+            r = subprocess.run(cmd, capture_output=False, env=qf_env)
+            if r.returncode in (0, 1) and os.path.exists(filtered):
+                print(f"\n  Using quality-filtered data for downstream phases: {filtered}")
+                data_path = filtered
+            else:
+                print(f"\n  ⚠️  Quality filter failed (rc={r.returncode}); proceeding with original {data_path}")
 
     # ── Phase 3: PREPARE ──
     print("\n\n" + "=" * 60)
@@ -2604,7 +3153,8 @@ def cmd_auto(args):
     )
     cmd_baseline(baseline_args)
 
-    baseline = json.load(open(baseline_path, encoding="utf-8"))
+    with open(baseline_path, encoding="utf-8") as _f:
+        baseline = json.load(_f)
     base_score = baseline.get("combined", 0)
 
     # Check headroom
@@ -2636,7 +3186,8 @@ def cmd_auto(args):
         cmd_candidates(cand_args)
 
         # Check for data augmentation recommendations
-        plan = json.load(open(plan_path, encoding="utf-8"))
+        with open(plan_path, encoding="utf-8") as _f:
+            plan = json.load(_f)
 
         # ── Baseline any alt models not yet baselined ──
         candidate_models = set(c["model"] for c in plan.get("candidates", []))
@@ -2647,7 +3198,8 @@ def cmd_auto(args):
             client_bl, _ = get_clients(
                 base_url=args.base_url, project_endpoint=args.project_endpoint, api_key=args.api_key
             )
-            rubric_bl = json.load(open(task_spec_path, encoding="utf-8")).get("eval_rubric", {})
+            with open(task_spec_path, encoding="utf-8") as _f:
+                rubric_bl = json.load(_f).get("eval_rubric", {})
             judge_bl = rubric_bl.get("judge_model", "gpt-4o")
             with open(test_file, encoding="utf-8") as f:
                 test_bl = [json.loads(line) for line in f if line.strip()]
@@ -2723,11 +3275,16 @@ def cmd_auto(args):
             leaderboard=leaderboard_path, baseline=baseline_path,
             task_spec=task_spec_path, output=review_path,
             runs=runs_path,
+            deep_diagnose=getattr(args, "deep_diagnose", False),
+            deep_diagnose_judge=getattr(args, "deep_diagnose_judge", None),
+            base_url=args.base_url, api_key=args.api_key,
+            project_endpoint=args.project_endpoint,
         )
         cmd_review(rev_args)
 
         # Read the decision
-        review = json.load(open(review_path, encoding="utf-8"))
+        with open(review_path, encoding="utf-8") as _f:
+            review = json.load(_f)
         decision = review.get("decision", "STOP")
         review_file = review_path
 
@@ -2753,7 +3310,8 @@ def cmd_auto(args):
     print(f"  ⏹️ COMPLETED {max_iterations} iterations without meeting threshold")
     print("=" * 60)
     if review_file:
-        review = json.load(open(review_file, encoding="utf-8"))
+        with open(review_file, encoding="utf-8") as _f:
+            review = json.load(_f)
         _print_auto_summary(work_dir, max_iterations, review, baseline)
 
 
@@ -2881,14 +3439,6 @@ def _print_auto_summary(work_dir, iterations, final_review, baseline):
             print(f"  Narrow hyperparameters around {best_close['candidate']} ({best_close['lift_pct']:+.1f}% lift)")
             print(f"     - Try: same config with more data, or lr +/- 0.2")
 
-    # Cost comparison (SHIP only)
-    cost = final_review.get("cost_comparison")
-    if cost:
-        print(f"\n  --- ROI vs Teacher ---")
-        print(f"  Quality:  {cost.get('quality_pct', '?')}% of teacher")
-        print(f"  Cost:     {cost.get('cost_savings', '?')}x cheaper")
-        print(f"  Latency:  {cost.get('latency_improvement', '?')}x faster TTFT")
-
     print(f"{'='*60}")
 
 
@@ -2930,6 +3480,35 @@ def build_parser():
     p.add_argument("--output-dir", default="./generated")
     add_connection_args(p)
 
+    # foundry-generate (uses the Foundry Data Generation API instead of a local teacher loop)
+    p = sub.add_parser("foundry-generate",
+                       help="Generate data via the Foundry Data Generation API (traces / corpus / agent / OpenAPI spec → SFT or eval JSONL)")
+    p.add_argument("--task-spec", required=True)
+    p.add_argument("--source", required=True,
+                   choices=["traces", "prompt-inline", "prompt-file", "file", "agent"],
+                   help="Where Foundry pulls raw material from")
+    p.add_argument("--recipe", default="qna", choices=["traces", "qna", "tool-use"],
+                   help="Recipe to apply (default: qna)")
+    p.add_argument("--scenario", default="sft", choices=["sft", "eval"],
+                   help="What the data is for (default: sft). RFT requires Traces source — see workflows/traces-to-dataset.md.")
+    p.add_argument("--max-samples", type=int, default=100,
+                   help="Samples to produce (15-1000, enforced by service; default 100)")
+    p.add_argument("--train-split", type=float, default=0.8,
+                   help="Train/validation split for SFT (default 0.8). EVAL ignores this.")
+    p.add_argument("--teacher", default=None,
+                   help="Teacher model deployment name (required for qna/tool-use; not needed for traces)")
+    # Source-specific args
+    p.add_argument("--prompt", default=None,
+                   help="Inline prompt text for --source prompt-inline (default: task_spec.description)")
+    p.add_argument("--prompt-file", default=None, help="Path to a text file (for --source prompt-file)")
+    p.add_argument("--file-id", default=None,
+                   help="Pre-uploaded OpenAI file id (for --source file). For tool-use, the file MUST be an OpenAPI 3.0/3.1 spec.")
+    p.add_argument("--agent-name", default=None, help="Deployed agent name (for traces/agent sources)")
+    p.add_argument("--agent-version", default=None, help="Pin agent version (recommended for traces)")
+    p.add_argument("--hours", type=int, default=None, help="For traces: pull spans from last N hours")
+    p.add_argument("--output-dir", default="./generated")
+    add_connection_args(p)
+
     # prepare
     p = sub.add_parser("prepare", help="Convert, filter, and split data")
     p.add_argument("--task-spec", required=True)
@@ -2958,9 +3537,13 @@ def build_parser():
     p = sub.add_parser("execute", help="Submit and monitor all candidates")
     p.add_argument("--plan", required=True)
     p.add_argument("--output", default="runs.json")
-    p.add_argument("--tier", default=None,
-                   choices=["developerTier", "globalStandard", "standard"],
-                   help="Training tier (overrides plan). OSS models auto-override to globalStandard.")
+    p.add_argument("--tier", default="globalStandard",
+                   help="Training tier(s) — single value or comma-separated list for round-robin. "
+                        "'globalStandard' (default, works in all regions). 'developerTier' (cheapest, "
+                        "capacity-limited). 'standard' (region-restricted; absent in many regions). "
+                        "Example: --tier globalStandard,developerTier distributes candidates across "
+                        "both tiers so one capacity bottleneck doesn't block the whole iteration. "
+                        "OSS models auto-override to globalStandard.")
     add_connection_args(p)
 
     # evaluate
@@ -2980,6 +3563,11 @@ def build_parser():
     p.add_argument("--task-spec", required=True)
     p.add_argument("--output", default="review.json")
     p.add_argument("--runs", default=None, help="runs.json for training metrics (optional)")
+    p.add_argument("--deep-diagnose", action="store_true",
+                   help="When decision=ITERATE, also run scripts/diagnose_iteration.py to inspect sampled train/test rows with an LLM judge and surface a root-cause + concrete next step. Costs one judge call. Also enabled via env DEEP_DIAGNOSE=1.")
+    p.add_argument("--deep-diagnose-judge", default=None,
+                   help="Judge model for deep diagnosis (default: task_spec eval_rubric.judge_model, else gpt-4.1).")
+    add_connection_args(p)
 
     # auto (full loop)
     p = sub.add_parser("auto", help="Run the full loop: analyze → prepare → baseline → train → evaluate → iterate")
@@ -2995,11 +3583,66 @@ def build_parser():
     p.add_argument("--schema-file", default=None, help="Schema/context file for domain-aware generation")
     p.add_argument("--min-quality", type=float, default=7.0, help="Min quality score for generated data")
     p.add_argument("--capacity", type=int, default=100, help="Deployment capacity for eval")
-    p.add_argument("--tier", default="developerTier",
-                   choices=["developerTier", "globalStandard", "standard"],
-                   help="Training tier: developerTier (cheapest, spot), globalStandard (priority), "
-                        "standard (data residency). Note: OSS models (qwen, llama, ministral, oss-20b) "
-                        "only support globalStandard — other tiers are auto-overridden.")
+    p.add_argument("--tier", default="globalStandard",
+                   help="Training tier(s) — single value or comma-separated list for round-robin. "
+                        "'globalStandard' (default, works in all regions) — recommended. "
+                        "'developerTier' (cheapest, spot — may be capacity-limited). "
+                        "'standard' (region-restricted; absent in many regions). "
+                        "Example: --tier globalStandard,developerTier distributes candidates across "
+                        "both tiers so one capacity bottleneck doesn't block the whole iteration. "
+                        "OSS models (qwen, llama, ministral, oss-20b) auto-override to globalStandard. "
+                        "Tier is sent via extra_body to the SDK, body parameter to REST.")
+    p.add_argument("--datagen-backend", default="auto",
+                   choices=["auto", "local", "foundry-prompt", "foundry-file",
+                            "foundry-agent", "foundry-traces"],
+                   help="Where Phase 2 (GENERATE) pulls data from. "
+                        "'auto' (default) infers from companion flags: "
+                        "--datagen-file-id → foundry-file; "
+                        "--datagen-agent-name + --datagen-hours → foundry-traces; "
+                        "--datagen-agent-name alone → foundry-agent; "
+                        "nothing → local. "
+                        "Project endpoint alone is NOT enough — must pass a "
+                        "datagen-* flag or explicit --datagen-backend foundry-prompt. "
+                        "'local' = in-process teacher loop (no project endpoint required); "
+                        "'foundry-*' = Foundry Data Generation API.")
+    p.add_argument("--datagen-file-id", default=None, help="OpenAI file id for --datagen-backend foundry-file")
+    p.add_argument("--datagen-agent-name", default=None, help="Agent name for --datagen-backend foundry-agent or foundry-traces")
+    p.add_argument("--datagen-agent-version", default=None, help="Pin agent version for traces (recommended)")
+    p.add_argument("--datagen-hours", type=int, default=None,
+                   help="Hours of traces to pull (default: 24 when foundry-traces backend is selected, unset otherwise — presence of this flag is one of the inference signals for backend=foundry-traces)")
+    p.add_argument("--datagen-recipe", default=None, choices=["qna", "tool-use", "traces"],
+                   help="Override the Foundry datagen recipe (default: inferred from --datagen-backend — file/agent/prompt → qna, traces → traces). Use 'tool-use' when the file is an OpenAPI 3.0 spec.")
+    p.add_argument("--datagen-scenario", default=None, choices=["sft", "eval"],
+                   help="Override the Foundry datagen scenario (default: sft).")
+    # Required-when-foundry-traces inputs. The traces export has none of these at row level.
+    p.add_argument("--traces-system-prompt-file", default=None,
+                   help="Path to the agent's system prompt text. Required for --datagen-backend foundry-traces — injected into each training row so the FT'd model learns the right persona.")
+    p.add_argument("--traces-tools-file", default=None,
+                   help="Path to a JSON file containing the agent's tool definitions (OpenAI chat.completions tools array). Required for --datagen-backend foundry-traces — injected into each training row so the FT'd model learns tool schemas.")
+    # Optional content-safety pre-screen between Phase 2 (GENERATE) and Phase 3 (PREPARE).
+    # Use when you've seen "User data has failed data safety check" rejections.
+    p.add_argument("--content-safety-prescreen", action="store_true",
+                   help="Score generated data against Azure Content Safety and drop rows above --content-safety-threshold before PREPARE. Off by default. Requires --content-safety-endpoint + --content-safety-key (or AZURE_CONTENT_SAFETY_ENDPOINT / AZURE_CONTENT_SAFETY_KEY env vars).")
+    p.add_argument("--content-safety-endpoint", default=None,
+                   help="Azure Content Safety endpoint, e.g. https://<resource>.cognitiveservices.azure.com")
+    p.add_argument("--content-safety-key", default=None,
+                   help="Azure Content Safety API key")
+    p.add_argument("--content-safety-threshold", type=int, default=2,
+                   help="Severity threshold for the pre-screen (0=safe, 2=low, 4=medium, 6=high). Default 2 because Azure FT preprocessing rejects at low severity in practice.")
+    # Optional Phase 2c quality filter (LLM-judge per-row)
+    p.add_argument("--quality-filter", action="store_true",
+                   help="Score each generated row with an LLM judge on non-fragmented/non-empty/on-topic axes; drop rows below --quality-filter-threshold. Recommended for synthetic QnA where datagen can produce truncated or refusal outputs. Off by default.")
+    p.add_argument("--quality-filter-judge", default="gpt-4.1-mini",
+                   help="Judge model deployment for the quality filter (default: gpt-4.1-mini).")
+    p.add_argument("--quality-filter-threshold", type=int, default=4,
+                   help="Min score (1-5) the judge must give on every axis for a row to pass (default: 4).")
+    p.add_argument("--quality-filter-concurrency", type=int, default=4,
+                   help="Parallel judge requests during quality filter (default: 4).")
+    # Deep diagnosis on ITERATE (LLM-judge data inspection)
+    p.add_argument("--deep-diagnose", action="store_true",
+                   help="When the autopilot returns ITERATE, also run scripts/diagnose_iteration.py to inspect sampled train/test data with an LLM judge and surface a root-cause + concrete next step. Costs one judge call per iteration. Also enabled by env DEEP_DIAGNOSE=1.")
+    p.add_argument("--deep-diagnose-judge", default=None,
+                   help="Judge model for deep diagnosis (default: task_spec eval_rubric.judge_model, else gpt-4.1).")
     add_connection_args(p)
 
     return parser
@@ -3016,6 +3659,7 @@ if __name__ == "__main__":
     commands = {
         "analyze": cmd_analyze,
         "generate": cmd_generate,
+        "foundry-generate": cmd_foundry_generate,
         "prepare": cmd_prepare,
         "baseline": cmd_baseline,
         "candidates": cmd_candidates,

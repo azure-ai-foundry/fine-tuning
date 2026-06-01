@@ -42,11 +42,23 @@ def load_grader(grader_path):
     if not os.path.isfile(grader_path):
         print(f"❌ Grader file not found: {grader_path}")
         sys.exit(1)
+    # Path validation: refuse to load graders from outside the current working directory tree.
+    # exec() is intentional below — the grader must be Python code defining a grade() function —
+    # but we restrict the source to user-owned paths to prevent loading remote/system-wide files.
+    cwd = os.path.realpath(os.getcwd())
+    real_path = os.path.realpath(grader_path)
+    if not real_path.startswith(cwd + os.sep) and real_path != cwd:
+        print(f"❌ Grader file must be within the current working directory tree.\n"
+              f"   path: {real_path}\n"
+              f"   cwd:  {cwd}\n"
+              f"   If you trust this path, copy it under {cwd} and retry.")
+        sys.exit(1)
     with open(grader_path, encoding="utf-8") as f:
         source = f.read()
-    namespace = {}
-    # WARNING: executes arbitrary code from grader_path — must be a trusted local file
-    exec(compile(source, grader_path, "exec"), namespace)
+    namespace: dict = {}
+    # SECURITY: executes arbitrary code from grader_path. Path is validated above to be
+    # under cwd; do NOT remove that check without an equivalent trust boundary.
+    exec(compile(source, grader_path, "exec"), namespace)  # noqa: S102 — graders are user code by design
     if "grade" not in namespace:
         print(f"❌ Grader file must define a grade(sample, item) function")
         sys.exit(1)

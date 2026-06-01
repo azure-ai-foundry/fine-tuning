@@ -4,3 +4,19 @@ env*/
 .env
 .vs/
 .vscode/
+# Local autopilot test runs (large logs + JSONL outputs)
+Skills/test_agent_*/
+Skills/test_agent_pids.txt
+
+
+Skills/smoke*.log
+# Debug artifacts from one-off traces tests
+Skills/af-traces-*.jsonl
+# Local monitor utility (not part of skill)
+Skills/check_runs.ps1
+
+
+# Datagen experiment artifacts
+Skills/test_chunked/
+Skills/test_cobol_full_dataset/
+Skills/test_probe_*/

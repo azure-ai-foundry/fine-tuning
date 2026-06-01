@@ -187,6 +187,32 @@ class TestSkillConsistency:
             full_path = SKILLS_DIR / doc_path
             assert full_path.exists(), f"SKILL.md references {ref} but file doesn't exist"
 
+    def test_every_script_is_documented_in_skill_md(self):
+        """Every .py script in scripts/ must be named in SKILL.md.
+
+        Catches orphan scripts that exist on disk but aren't discoverable
+        from the skill's entry-point doc. Skips common.py (shared helper,
+        no user-facing CLI) and the __init__.py module marker.
+        """
+        excluded = {"common.py", "__init__.py"}
+        skip_dirs = {"validate"}  # validators are documented as a category
+        undocumented = []
+        for py in (SCRIPTS_DIR.glob("*.py")):
+            if py.name in excluded:
+                continue
+            if py.name not in self.skill_content:
+                undocumented.append(py.name)
+        # Validators are documented as a section header, not individually
+        for py in (SCRIPTS_DIR / "validate").glob("*.py"):
+            if py.name in excluded:
+                continue
+            if py.name not in self.skill_content:
+                undocumented.append(f"validate/{py.name}")
+        assert not undocumented, (
+            f"Scripts exist but are not named in SKILL.md: {undocumented}. "
+            f"Add them to the Scripts table or move/delete them."
+        )
+
 
 # ── Auto-Finetune CLI ────────────────────────────────────────────────────
 
@@ -207,7 +233,8 @@ class TestAutoFinetuneCLI:
 
     def test_all_subcommands_exist(self):
         """All expected subcommands should be available."""
-        expected = ["analyze", "generate", "prepare", "baseline", "candidates", "execute", "evaluate", "review", "auto"]
+        expected = ["analyze", "generate", "foundry-generate", "prepare", "baseline",
+                    "candidates", "execute", "evaluate", "review", "auto"]
         result = subprocess.run(
             [sys.executable, self.AUTO_FT, "--help"],
             capture_output=True, text=True, timeout=10,
@@ -215,6 +242,48 @@ class TestAutoFinetuneCLI:
         assert result.returncode == 0
         for cmd in expected:
             assert cmd in result.stdout, f"Subcommand '{cmd}' not found in help output"
+
+    def test_foundry_generate_subcommand_help(self):
+        """The 'foundry-generate' subcommand should expose Foundry datagen flags."""
+        result = subprocess.run(
+            [sys.executable, self.AUTO_FT, "foundry-generate", "--help"],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0
+        for flag in ["--task-spec", "--source", "--recipe", "--scenario",
+                     "--max-samples", "--train-split", "--teacher",
+                     "--prompt", "--prompt-file", "--file-id",
+                     "--agent-name", "--agent-version", "--hours",
+                     "--project-endpoint"]:
+            assert flag in result.stdout, f"foundry-generate missing flag {flag}"
+        # Source/recipe/scenario choices appear
+        assert "traces" in result.stdout and "tool-use" in result.stdout
+
+    def test_auto_includes_datagen_backend(self):
+        """`auto` subcommand should expose --datagen-backend selector for Foundry datagen."""
+        result = subprocess.run(
+            [sys.executable, self.AUTO_FT, "auto", "--help"],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0
+        for flag in ["--datagen-backend", "--datagen-file-id",
+                     "--datagen-agent-name", "--datagen-hours"]:
+            assert flag in result.stdout, f"auto missing {flag}"
+        # Backend choices (including 'auto' for inference)
+        for choice in ["auto", "local", "foundry-prompt", "foundry-file",
+                       "foundry-agent", "foundry-traces"]:
+            assert choice in result.stdout, f"--datagen-backend choice {choice} missing"
+
+    def test_auto_includes_traces_transform_flags(self):
+        """`auto` subcommand should expose --traces-system-prompt-file/--traces-tools-file
+        for the foundry-traces backend (Phase 2a transform wiring)."""
+        result = subprocess.run(
+            [sys.executable, self.AUTO_FT, "auto", "--help"],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0
+        for flag in ["--traces-system-prompt-file", "--traces-tools-file"]:
+            assert flag in result.stdout, f"auto missing {flag}"
 
     def test_analyze_accepts_connection_args(self):
         """The 'analyze' subcommand should accept connection args."""
@@ -225,6 +294,318 @@ class TestAutoFinetuneCLI:
         assert result.returncode == 0
         assert "--base-url" in result.stdout
         assert "--api-key" in result.stdout
+
+
+# ── Datagen backend inference ────────────────────────────────────────────
+
+class TestDatagenBackendInference:
+    """Unit tests for _infer_datagen_backend — used by `auto_finetune.py auto` when
+    --datagen-backend is left at default ('auto')."""
+
+    @pytest.fixture(autouse=True)
+    def _add_scripts_to_path(self):
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        yield
+        try:
+            sys.path.remove(str(SCRIPTS_DIR))
+        except ValueError:
+            pass
+
+    def _ns(self, **kw):
+        """Build a Namespace with the flags we care about (all default None)."""
+        import argparse
+        defaults = dict(
+            datagen_backend="auto", datagen_file_id=None, datagen_agent_name=None,
+            datagen_hours=None, project_endpoint=None,
+        )
+        defaults.update(kw)
+        return argparse.Namespace(**defaults)
+
+    def test_explicit_backend_wins_over_inference(self, capsys):
+        from auto_finetune import _infer_datagen_backend
+        # Explicit local even though file-id would have inferred foundry-file
+        ns = self._ns(datagen_backend="local", datagen_file_id="file-abc")
+        assert _infer_datagen_backend(ns) == "local"
+
+    def test_file_id_infers_foundry_file(self):
+        from auto_finetune import _infer_datagen_backend
+        assert _infer_datagen_backend(self._ns(datagen_file_id="file-abc")) == "foundry-file"
+
+    def test_agent_name_plus_hours_infers_foundry_traces(self):
+        from auto_finetune import _infer_datagen_backend
+        ns = self._ns(datagen_agent_name="retail-agent", datagen_hours=24)
+        assert _infer_datagen_backend(ns) == "foundry-traces"
+
+    def test_agent_name_alone_infers_foundry_agent(self):
+        from auto_finetune import _infer_datagen_backend
+        ns = self._ns(datagen_agent_name="retail-agent")
+        assert _infer_datagen_backend(ns) == "foundry-agent"
+
+    def test_project_endpoint_alone_does_not_infer_foundry(self):
+        """Project-endpoint alone is too weak a signal — many users set
+        AZURE_AI_PROJECT_ENDPOINT for unrelated reasons. Inference falls to local
+        unless the user explicitly passes a datagen-* flag or --datagen-backend.
+        """
+        from auto_finetune import _infer_datagen_backend
+        ns = self._ns(project_endpoint="https://x.services.ai.azure.com/api/projects/p")
+        assert _infer_datagen_backend(ns) == "local"
+
+    def test_nothing_set_defaults_to_local(self):
+        from auto_finetune import _infer_datagen_backend
+        assert _infer_datagen_backend(self._ns()) == "local"
+
+    def test_file_id_beats_agent_name(self):
+        from auto_finetune import _infer_datagen_backend
+        # File-id is most specific → wins over agent-name
+        ns = self._ns(datagen_file_id="file-abc", datagen_agent_name="agent")
+        assert _infer_datagen_backend(ns) == "foundry-file"
+
+
+class TestTierParsing:
+    """Unit tests for _parse_tiers — used to mix tiers across candidates."""
+
+    @pytest.fixture(autouse=True)
+    def _path(self):
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        yield
+        try: sys.path.remove(str(SCRIPTS_DIR))
+        except ValueError: pass
+
+    def test_single_tier(self):
+        from auto_finetune import _parse_tiers
+        assert _parse_tiers("globalStandard") == ["globalStandard"]
+
+    def test_csv_two_tiers(self):
+        from auto_finetune import _parse_tiers
+        assert _parse_tiers("globalStandard,developerTier") == ["globalStandard", "developerTier"]
+
+    def test_csv_with_whitespace(self):
+        from auto_finetune import _parse_tiers
+        assert _parse_tiers(" globalStandard , developerTier ") == ["globalStandard", "developerTier"]
+
+    def test_empty_falls_back_to_default(self):
+        from auto_finetune import _parse_tiers
+        assert _parse_tiers(None) == ["globalStandard"]
+        assert _parse_tiers("") == ["globalStandard"]
+        assert _parse_tiers(",") == ["globalStandard"]
+
+
+class TestToolCallScoring:
+    """Unit tests for _score_tool_calls — used to grade tool-using FT outputs."""
+
+    @pytest.fixture(autouse=True)
+    def _path(self):
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        yield
+        try: sys.path.remove(str(SCRIPTS_DIR))
+        except ValueError: pass
+
+    def _mk(self, name, args):
+        return {"function": {"name": name, "arguments": __import__("json").dumps(args)}}
+
+    def test_exact_match_full_score(self):
+        from auto_finetune import _score_tool_calls
+        ref = [self._mk("get_order", {"id": "A1"})]
+        out = [self._mk("get_order", {"id": "A1"})]
+        assert _score_tool_calls(ref, out) == 10
+
+    def test_name_match_arg_diff(self):
+        from auto_finetune import _score_tool_calls
+        ref = [self._mk("get_order", {"id": "A1"})]
+        out = [self._mk("get_order", {"id": "B2"})]
+        assert _score_tool_calls(ref, out) == 8
+
+    def test_no_overlap(self):
+        from auto_finetune import _score_tool_calls
+        ref = [self._mk("get_order", {"id": "A1"})]
+        out = [self._mk("submit_refund", {"id": "B2"})]
+        assert _score_tool_calls(ref, out) == 1
+
+    def test_model_emitted_no_tool_calls(self):
+        from auto_finetune import _score_tool_calls
+        ref = [self._mk("get_order", {"id": "A1"})]
+        assert _score_tool_calls(ref, []) == 1
+
+    def test_partial_overlap_in_parallel(self):
+        from auto_finetune import _score_tool_calls
+        ref = [self._mk("a", {}), self._mk("b", {})]
+        out = [self._mk("a", {}), self._mk("c", {})]
+        # |overlap|/|union| = 1/3 → score in 2..8 range
+        score = _score_tool_calls(ref, out)
+        assert 2 <= score < 8
+
+    def test_handles_dict_with_top_level_name(self):
+        from auto_finetune import _score_tool_calls
+        # Some SDKs emit top-level name/arguments instead of function.{name,arguments}
+        ref = [{"name": "x", "arguments": '{"a": 1}'}]
+        out = [{"name": "x", "arguments": '{"a": 1}'}]
+        assert _score_tool_calls(ref, out) == 10
+
+
+class TestAutoIncludesQualityFilterFlags:
+    """Phase 2c quality-filter CLI surface."""
+
+    AUTO_FT = str(SCRIPTS_DIR / "auto_finetune.py")
+
+    def test_auto_exposes_quality_filter_flags(self):
+        result = subprocess.run(
+            [sys.executable, self.AUTO_FT, "auto", "--help"],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0
+        for flag in ["--quality-filter", "--quality-filter-judge",
+                     "--quality-filter-threshold", "--quality-filter-concurrency"]:
+            assert flag in result.stdout, f"auto missing {flag}"
+
+    def test_quality_filter_script_help(self):
+        qf = str(SCRIPTS_DIR / "quality_filter.py")
+        result = subprocess.run(
+            [sys.executable, qf, "--help"],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0
+        for flag in ["--jsonl", "--drop-out", "--report", "--judge", "--threshold", "--concurrency"]:
+            assert flag in result.stdout, f"quality_filter.py missing {flag}"
+
+
+class TestTransformTracesJsonl:
+    """Unit tests for transform_traces_jsonl helpers (the 5 fixes)."""
+
+    @pytest.fixture(autouse=True)
+    def _path(self):
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        yield
+        try: sys.path.remove(str(SCRIPTS_DIR))
+        except ValueError: pass
+
+    def test_dedup_overlapping_snapshots(self):
+        from transform_traces_jsonl import dedup_messages
+        msgs = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello"},
+            {"role": "user", "content": "hi"},  # duplicate
+            {"role": "assistant", "content": "hello"},  # duplicate
+            {"role": "user", "content": "what now"},
+        ]
+        out, dropped = dedup_messages(msgs)
+        assert dropped == 2
+        assert len(out) == 3
+        assert out[-1] == {"role": "user", "content": "what now"}
+
+    def test_is_fragment_true_no_tool_calls(self):
+        from transform_traces_jsonl import is_fragment
+        assert is_fragment([
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "what color?"},
+        ]) is True
+
+    def test_is_fragment_false_with_tool_calls(self):
+        from transform_traces_jsonl import is_fragment
+        assert is_fragment([
+            {"role": "user", "content": "order status"},
+            {"role": "assistant", "tool_calls": [{"id": "1", "function": {"name": "get_order"}}]},
+        ]) is False
+
+    def test_merge_consecutive_asst_tool_calls(self):
+        from transform_traces_jsonl import merge_consecutive_asst_tool_calls
+        msgs = [
+            {"role": "user", "content": "x"},
+            {"role": "assistant", "tool_calls": [{"id": "a", "function": {"name": "f1"}}]},
+            {"role": "assistant", "tool_calls": [{"id": "b", "function": {"name": "f2"}}]},
+            {"role": "tool", "tool_call_id": "a", "content": "ok"},
+            {"role": "tool", "tool_call_id": "b", "content": "ok"},
+        ]
+        merged = merge_consecutive_asst_tool_calls(msgs)
+        assert merged == 1
+        assert len(msgs) == 4
+        # The merged assistant now has both tool calls
+        asst = msgs[1]
+        assert len(asst["tool_calls"]) == 2
+
+    def test_fix_null_content_strips_field(self):
+        from transform_traces_jsonl import fix_null_content
+        msgs = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "null", "tool_calls": [{"id": "a", "function": {"name": "f"}}]},
+            {"role": "assistant", "content": "text-only reply"},
+        ]
+        n = fix_null_content(msgs)
+        assert n == 1
+        assert "content" not in msgs[1]  # stripped on tool-call row
+        assert msgs[2]["content"] == "text-only reply"  # text-only row untouched
+
+
+class TestQualityFilter:
+    """Unit tests for quality_filter._extract_pair (judge interaction is mocked-out scope)."""
+
+    @pytest.fixture(autouse=True)
+    def _path(self):
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        yield
+        try: sys.path.remove(str(SCRIPTS_DIR))
+        except ValueError: pass
+
+    def test_extract_pair_text_only(self):
+        from quality_filter import _extract_pair
+        row = {"messages": [
+            {"role": "user", "content": "What is COBOL?"},
+            {"role": "assistant", "content": "COBOL is a programming language."},
+        ]}
+        user, response, is_tool = _extract_pair(row)
+        assert user == "What is COBOL?"
+        assert response == "COBOL is a programming language."
+        assert is_tool is False
+
+    def test_extract_pair_tool_only_row(self):
+        from quality_filter import _extract_pair
+        row = {"messages": [
+            {"role": "user", "content": "look it up"},
+            {"role": "assistant", "tool_calls": [{"function": {"name": "search"}}]},
+        ]}
+        user, response, is_tool = _extract_pair(row)
+        assert user == "look it up"
+        assert is_tool is True
+
+    def test_extract_pair_handles_missing_assistant(self):
+        from quality_filter import _extract_pair
+        row = {"messages": [{"role": "user", "content": "hi"}]}
+        user, response, is_tool = _extract_pair(row)
+        assert user == "hi"
+        assert response == ""
+        assert is_tool is False
+
+
+class TestContentSafetyCheck:
+    """Unit tests for content_safety_check helpers (network mocked)."""
+
+    @pytest.fixture(autouse=True)
+    def _path(self):
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        yield
+        try: sys.path.remove(str(SCRIPTS_DIR))
+        except ValueError: pass
+
+    def test_script_help(self):
+        result = subprocess.run(
+            [sys.executable, str(SCRIPTS_DIR / "content_safety_check.py"), "--help"],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0
+        for flag in ["--jsonl", "--endpoint", "--api-key", "--threshold", "--drop-out"]:
+            assert flag in result.stdout, f"content_safety_check.py missing {flag}"
+
+    def test_extract_text_concatenates_messages(self):
+        # content_safety_check has a helper that pulls all messages' text content
+        # for scoring. Verify it tolerates rows without content (tool-call rows).
+        import content_safety_check as cs
+        if hasattr(cs, "_row_text"):
+            row = {"messages": [
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "hi"},
+                {"role": "assistant", "tool_calls": [{"function": {"name": "x"}}]},
+            ]}
+            text = cs._row_text(row)
+            assert "hello" in text and "hi" in text
 
 
 # ── Cost Estimation ──────────────────────────────────────────────────────

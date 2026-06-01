@@ -29,6 +29,8 @@ Read the workflow file that matches the user's current stage:
 - **First time / just want to get started** → `workflows/quickstart.md`
 - **Starting from scratch** → `workflows/full-pipeline.md`
 - **Need a dataset** → `workflows/dataset-creation.md`
+- **Have a deployed agent — distill its traces into a smaller model** → `workflows/traces-to-dataset.md`
+- **No traces yet — generate Q&A from a doc or tool-use from an OpenAPI spec** → `workflows/synthetic-datagen.md`
 - **Training and iterating** → `workflows/iterative-training.md`
 - **Results are bad** → `workflows/diagnose-poor-results.md`
 - **Reviewing results & planning next run** → `workflows/experiment-review.md`
@@ -44,6 +46,7 @@ Read the relevant reference file before performing any step:
 | `references/training-types.md` | Choosing between SFT, DPO, and RFT |
 | `references/hyperparameters.md` | Setting learning rate, batch size, epochs |
 | `references/dataset-formats.md` | Preparing or converting training data |
+| `references/data-generation-api.md` | Foundry Data Generation API (preview) — sources, recipes, scenarios for traces→dataset and synthetic datagen |
 | `references/deployment-formats.md` | Deploying a fine-tuned model |
 | `references/evaluation-methodology.md` | Designing an eval rubric |
 | `references/training-curve-analysis.md` | Reading training logs and curves |
@@ -64,10 +67,12 @@ Reusable Python scripts in `scripts/`. Each is self-contained with inline docume
 | Script | Purpose |
 |--------|---------|
 | `auto_finetune.py` | **Autonomous orchestrator (experimental, SFT only)** — runs the full loop: analyze → generate → prepare → baseline → train → evaluate → review → iterate. Good for exploration; use individual scripts for production workflows or RFT. |
+| `auto_rft.py` | **Autonomous RFT orchestrator (experimental)** — full loop for reinforcement fine-tuning: validate → prepare → calibrate → baseline → submit → monitor → evaluate → iterate. Use this for RFT; use `auto_finetune.py` for SFT. |
 | `submit_training.py` | Submit SFT, DPO, or RFT jobs (SDK + REST fallback) |
 | `monitor_training.py` | Poll a running job until completion, streaming events in real time |
+| `generate_dataset.py` | Generate fine-tuning or eval data via the Foundry Data Generation API (preview) — traces → SFT/eval, doc → Q&A, OpenAPI spec → tool-use. SDK + REST modes. Also includes `--tools-from`/`--tools-to-openapi-out` converter for OpenAI tool-spec → OpenAPI 3.0. |
 | `calibrate_grader.py` | Run base model through your RFT grader to find optimal pass_threshold |
-| `generate_distillation_data.py` | Generate training data from a teacher model for distillation |
+| `generate_distillation_data.py` | Generate training data from a teacher model for distillation (legacy custom-script approach) |
 | `check_training.py` | Pull training curves, detect overfitting, list checkpoints |
 | `deploy_model.py` | Deploy fine-tuned models via ARM REST API |
 | `cleanup.py` | List and delete old deployments, files, and pending jobs to reclaim quota |
@@ -79,6 +84,11 @@ Reusable Python scripts in `scripts/`. Each is self-contained with inline docume
 | `validate/validate_dpo.py` | Validate DPO JSONL: schema, identical-pair detection, DPO epoch warnings |
 | `validate/validate_rft.py` | Validate RFT JSONL: schema, grader escaping warnings, content moderation risk |
 | `validate/data_stats.py` | Dataset stats: token counts, format detection, cost estimates per model family |
+| `content_safety_check.py` | **Debugging tool** — when Azure FT fails with "User data has failed data safety check", run this to identify which specific rows tripped the classifier. Uses Azure Content Safety API (Hate/Sexual/SelfHarm/Violence severity 0-7) and can write a `--drop-out` file with only passing rows. Not part of the normal flow; reach for it only when preprocessing rejects an otherwise-clean file. |
+| `transform_traces_jsonl.py` | **Required for traces-to-SFT distillation of tool-using agents** — Foundry's Traces datagen emits data that fails Azure FT preprocessing in five independent ways (overlapping snapshots, fragments, content="null" on tool-call rows, consecutive asst tool_calls, missing system+tools). This script applies all five fixes per the canonical example notebook. Takes the raw `*_dg.jsonl` from Foundry + the agent's system prompt + tool definitions; writes Azure FT-ready JSONL. |
+| `chunk_and_generate.py` | **Workaround for `SimpleQnA` saturation on large source docs** — Foundry's QnA generator saturates at ~100-150 unique pairs per source file regardless of `max_samples`. This script chunks a local text file into N pieces (with overlap, snapping to paragraph boundaries), uploads each, runs N parallel datagen jobs, and concatenates the results. Use when your reference doc is too large to be summarized by a single ~100-question pass (e.g. distilling a 800-page technical standard). |
+| `quality_filter.py` | LLM-judge per-row quality filter for generated data. Scores each prompt/response pair on `non_fragmented` / `non_empty` / `on_topic` (1-5) and drops rows below threshold. Wired into the autopilot via `--quality-filter`. |
+| `diagnose_iteration.py` | When the autopilot returns ITERATE, this asks a strong LLM to look at the task description, eval rubric, dataset sizes, and 3 sample rows from train/test, then picks one of seven root-cause buckets (data_quality, train_test_mismatch, rubric_mismatch, task_genuinely_hard, needs_more_data, wrong_hps, wrong_base_model) plus a concrete next-step. Wired into `cmd_review` via `--deep-diagnose`. |
 
 **Always validate data before submitting jobs** — run `validate_sft.py` / `validate_dpo.py` / `validate_rft.py` first, then `data_stats.py` for the overview.
 
@@ -91,6 +101,16 @@ Reusable Python scripts in `scripts/`. Each is self-contained with inline docume
 | Task | Command |
 |------|---------|
 | Validate SFT data | `python scripts/validate/validate_sft.py data.jsonl` |
+| Triage `"User data has failed data safety check"` errors | `python scripts/content_safety_check.py --jsonl train.jsonl --endpoint https://<resource>.cognitiveservices.azure.com --api-key $env:AZURE_CONTENT_SAFETY_KEY --drop-out clean.jsonl` |
+| Transform Foundry traces output into Azure FT-ready JSONL (for traces-to-SFT distillation) | `python scripts/transform_traces_jsonl.py --jsonl raw_traces_dg.jsonl --system-prompt-file system.md --tools-file tools.json --out sft.jsonl` |
+| Full autopilot for traces distillation (auto-runs the transform) | `python scripts/auto_finetune.py auto --description "..." --task-name <name> --model <student> --teacher <strong> --datagen-agent-name <agent> --datagen-agent-version <v> --datagen-hours 720 --traces-system-prompt-file system.md --traces-tools-file tools.json` |
+| Generate dataset from agent traces | `python scripts/generate_dataset.py --source traces --agent-name <name> --agent-version <v> --recipe traces --scenario sft --max-samples 200 --train-split 0.8 --hours 24 --download` |
+| Generate Q&A from a doc | `python scripts/generate_dataset.py --source prompt-file --prompt-file policy.md --recipe qna --scenario sft --teacher gpt-4.1-mini --max-samples 100 --train-split 0.9 --download` |
+| Generate Q&A from a large doc (chunked workaround for SimpleQnA per-source saturation) | `python scripts/chunk_and_generate.py --source-text big-doc.txt --chunks 10 --teacher gpt-4.1 --recipe qna --scenario sft --max-samples-per-chunk 100 --concurrency 2 --out merged.jsonl --cleanup-uploads` |
+| Filter generated data on quality (LLM judge) | `python scripts/quality_filter.py --jsonl generated.jsonl --judge gpt-4.1-mini --threshold 4 --drop-out filtered.jsonl` |
+| Deep-diagnose why an autopilot iteration didn't ship | `python scripts/diagnose_iteration.py --work-dir ./auto_ft_run --judge gpt-4.1` |
+| Convert OpenAI tools to OpenAPI 3.0 (for tool-use) | `python scripts/generate_dataset.py --tools-from openai_tools.json --tools-to-openapi-out openapi.json` |
+| Generate tool-use SFT (upload openapi.json first) | `python scripts/generate_dataset.py --source file --file-id <openapi-file-id> --recipe tool-use --scenario sft --teacher gpt-4.1-mini --max-samples 50 --train-split 0.8 --download` |
 | Submit SFT job | `python scripts/submit_training.py --model gpt-4.1-mini --training-file train.jsonl --validation-file val.jsonl --type sft` |
 | Monitor job | `python scripts/monitor_training.py --job-id ftjob-xxx` |
 | Analyze curves | `python scripts/check_training.py --job-id ftjob-xxx` |
@@ -239,4 +259,24 @@ These patterns are based on extensive end-to-end testing across SFT, DPO, and RF
 | Misaligned RFT grader | Reward hacking — model games the grader | Use same grading logic for training and eval |
 | Small OSS models on large label sets | Model invents synonym labels (capacity limit) | Use ≥20B parameter models for 50+ classes |
 
+## Testing this skill
 
+The skill ships with two test suites under `tests/`:
+
+```powershell
+cd Skills
+
+# Fast checks (default — skips anything that hits the live service)
+python -m pytest tests/ -v
+
+# End-to-end suite against a real Foundry project
+$env:FOUNDRY_PROJECT_ENDPOINT = "https://<resource>.services.ai.azure.com/api/projects/<project>"
+$env:FOUNDRY_TEACHER_MODEL    = "gpt-4.1"             # any deployed chat model
+$env:FOUNDRY_AGENT_NAME       = "<your-agent>"        # for traces/agent tests
+$env:FOUNDRY_AGENT_VERSION    = "1"
+$env:E2E_JOB_TIMEOUT          = "900"                  # 15 min per non-tool-use job
+$env:E2E_TOOL_USE_TIMEOUT     = "2700"                 # 45 min cap on tool-use jobs
+python -m pytest tests/test_data_generation_e2e.py -m live -v
+```
+
+`-m live` selects the 9 live tests; the default `-m "not live"` runs only the 8 CLI/argparse tests plus the 48 existing skill-consistency tests. Authentication uses `DefaultAzureCredential` — run `az login` first.
