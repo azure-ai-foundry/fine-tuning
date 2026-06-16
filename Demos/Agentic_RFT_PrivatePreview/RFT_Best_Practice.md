@@ -40,7 +40,7 @@ The grader is the primary driver of RFT success. Invest disproportionate effort 
 - **Use the simplest grader that works**: If validating an exact match answer (for example, a number or multiple‑choice letter), use a **string‑match grader** rather than a model‑based or Python grader — even if those alternatives could also work.
 - **Prefer deterministic checks**: String validation, code or Python‑based graders, and endpoint‑based graders are more reliable than model‑based grading.
 - **Aim for well‑distributed rewards**: Rewards that are too sparse or too uniform produce weak learning signals that limit model improvement.
-- **Validate on diverse, real‑world inputs**: Use [Foundry evaluations](https://learn.microsoft.com/en-us/azure/foundry/how-to/evaluate-generative-ai-app) to test graders on existing datasets to ensure they behave as expected.
+- **Validate on diverse, real‑world inputs**: Validate graders on real world datasets rather than relying only on synthetic data.
 
 ### Start Small and Iterate
 
