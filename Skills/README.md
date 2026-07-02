@@ -82,6 +82,7 @@ Skills/
 │   ├── deployment-formats.md         # Model format, SKU, and version mapping
 │   ├── evaluation-methodology.md     # Eval rubric design and grader types
 │   ├── training-curve-analysis.md    # Reading training logs and curves (SFT + RFT)
+│   ├── auto-evals.md                 # Reading auto-generated per-step evals (early progress signal)
 │   ├── grader-design.md             # RFT grader design (type selection, partial credit, calibration)
 │   ├── foundry-cli.md               # azd ai finetuning CLI reference
 │   ├── vision-fine-tuning.md         # Image/video fine-tuning (gpt-4o, gpt-4.1)
@@ -104,6 +105,7 @@ Skills/
 │   ├── monitor_training.py           # Poll a running job until completion
 │   ├── calibrate_grader.py           # RFT grader threshold calibration
 │   ├── check_training.py             # Training curve analysis and checkpoints
+│   ├── analyze_auto_evals.py         # Retrieve/analyze auto-generated per-step evals
 │   ├── deploy_model.py               # Deploy via ARM REST API
 │   ├── evaluate_model.py             # LLM judge evaluation
 │   ├── convert_dataset.py            # Format conversion (SFT↔DPO↔RFT)
