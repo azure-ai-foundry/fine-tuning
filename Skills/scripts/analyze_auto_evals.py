@@ -88,7 +88,6 @@ def curve(client, job_id):
     print(f"  {'─'*6} {'─'*8} {'─'*7} {'─'*8}  {'─'*44}")
     best = None
     for step, name, rid, passed, failed, total, rate, status in rows:
-        marker = ""
         if best is None or rate > best[2]:
             best = (step, name, rate, rid)
         note = "" if status == "completed" else f"  [{status}]"
