@@ -50,6 +50,7 @@ Read the relevant reference file before performing any step:
 | `references/deployment-formats.md` | Deploying a fine-tuned model |
 | `references/evaluation-methodology.md` | Designing an eval rubric |
 | `references/training-curve-analysis.md` | Reading training logs and curves |
+| `references/auto-evals.md` | Reading the auto-generated per-step evals for early progress signal |
 | `references/foundry-cli.md` | Using the `azd ai finetuning` CLI for submit/deploy |
 | `references/vision-fine-tuning.md` | Fine-tuning with image data (gpt-4o, gpt-4.1) |
 | `references/cost-management.md` | Training costs, hosting tiers, budget planning |
@@ -74,6 +75,7 @@ Reusable Python scripts in `scripts/`. Each is self-contained with inline docume
 | `calibrate_grader.py` | Run base model through your RFT grader to find optimal pass_threshold |
 | `generate_distillation_data.py` | Generate training data from a teacher model for distillation (legacy custom-script approach) |
 | `check_training.py` | Pull training curves, detect overfitting, list checkpoints |
+| `analyze_auto_evals.py` | Retrieve and analyze the **auto-generated evals** Foundry attaches to a job — prints the per-step pass-rate curve (an early signal of whether the job is learning, refreshed every `eval_interval` steps) and can dump per-sample grader results for any step to JSONL |
 | `deploy_model.py` | Deploy fine-tuned models via ARM REST API |
 | `cleanup.py` | List and delete old deployments, files, and pending jobs to reclaim quota |
 | `evaluate_model.py` | Run held-out eval with 2-dimension LLM judge |
@@ -114,6 +116,8 @@ Reusable Python scripts in `scripts/`. Each is self-contained with inline docume
 | Submit SFT job | `python scripts/submit_training.py --model gpt-4.1-mini --training-file train.jsonl --validation-file val.jsonl --type sft` |
 | Monitor job | `python scripts/monitor_training.py --job-id ftjob-xxx` |
 | Analyze curves | `python scripts/check_training.py --job-id ftjob-xxx` |
+| Auto-eval pass-rate curve (early signal) | `python scripts/analyze_auto_evals.py --job-id ftjob-xxx` |
+| Dump per-sample auto-eval results for a step | `python scripts/analyze_auto_evals.py --job-id ftjob-xxx --run-id evalrun-xxx --dump results.jsonl` |
 | Deploy model | `python scripts/deploy_model.py --model-id ft:gpt-4.1-mini:... --name my-eval` |
 | Evaluate model | `python scripts/evaluate_model.py --deployment-name my-eval --test-file test.jsonl` |
 | Auto fine-tune | `python scripts/auto_finetune.py auto --data data.jsonl --description "task" --model gpt-4.1-mini` |
@@ -130,6 +134,7 @@ Reusable Python scripts in `scripts/`. Each is self-contained with inline docume
 | Content safety block at deployment | PII-dense training data | Remove problematic document types |
 | "BadRequestForDependentService" | Deployment still warming up | Wait 5+ minutes after deployment creation |
 | Queue stuck ("jobs ahead") | Standard tier capacity exhausted | Cancel and resubmit on `developerTier` or `globalStandard` |
+| Eval `output_items` request hangs / times out | `limit=100` on `/evals/{id}/runs/{run}/output_items` returns 120s+ (each item carries the full sample) | Use a small page size (`analyze_auto_evals.py` uses `limit=20`) |
 
 # Rules
 
