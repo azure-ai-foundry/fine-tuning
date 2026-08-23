@@ -54,6 +54,24 @@ def make_oid(rng):
 
 
 def push_one(responses_client, agent_name, agent_version, prompt, timeout=120):
+    # Hosted agents are addressed via `agent_reference` in the request body. The older
+    # form -- passing "<agent>:<version>" as `model` -- is no longer routed and comes
+    # back as 404 DeploymentNotFound, so fall back to it only if the new shape is
+    # rejected (older service versions won't recognise `agent_reference`).
+    ref = {"type": "agent_reference", "name": agent_name}
+    if agent_version:
+        ref["version"] = agent_version
+    try:
+        resp = responses_client.create(
+            input=prompt,
+            store=False,
+            timeout=timeout,
+            extra_body={"agent_reference": ref},
+        )
+        return True, getattr(resp, "id", "?"), None
+    except Exception as e:
+        if "agent_reference" not in str(e):
+            return False, None, str(e)[:200]
     try:
         resp = responses_client.create(
             model=f"{agent_name}:{agent_version}" if agent_version else agent_name,
