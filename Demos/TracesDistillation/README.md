@@ -16,14 +16,17 @@ Evaluation is driven by the **Foundry evaluations SDK** (`azure-ai-evaluation`) 
 
 ## Results
 
-Both runs pull ~720 hours of real traces from a deployed Zava-style Post-Purchase Resolution Desk agent (`gpt-4.1-mini` behind it) and distill them into a student model.
+Every run below pulls ~720 hours of real traces from a deployed Zava-style Post-Purchase Resolution Desk agent (`gpt-4.1-mini` behind it) and distills them into a student model.
 
-**Verified run — `gpt-4.1-mini` student** (100 samples → 99 rows → 79 train / 9 val / 11 test):
+**Verified runs — `gpt-4.1-mini` student** (each: 100 samples → 99 rows → 79 train / 9 val / 11 test, 3 epochs, lr=1.0):
 
-| Model | Combined | Pass Rate | Lift |
-|-------|----------|-----------|------|
-| Baseline `gpt-4.1-mini` | 6.82 | 36.4% | — |
-| Fine-tuned `gpt-4.1-mini` (3ep, lr=1.0) | **9.82** | **100%** | **+44.0%** |
+| Run | Baseline | Fine-tuned | Lift |
+|-----|----------|------------|------|
+| 1 | 6.82 @ 36.4% | **9.82 @ 100%** | **+44.0%** |
+| 2 | 7.73 @ 54.5% | **10.00 @ 100%** | **+29.4%** |
+| 3 | 7.27 @ 45.5% | **10.00 @ 100%** | **+37.6%** |
+
+All three runs reach a 100% pass rate on their held-out split. The lift differs because the *baseline* differs — see the run-to-run variance note below.
 
 **Originally published — `gpt-4.1-nano` student:**
 
@@ -34,9 +37,9 @@ Both runs pull ~720 hours of real traces from a deployed Zava-style Post-Purchas
 
 > **What the lift actually buys you.** With a `gpt-4.1-nano` student the win is model size — same tool-selection accuracy at roughly 10× lower cost per token. With a **`gpt-4.1-mini` student the model size is unchanged**, so the saving is different in kind: the fine-tuned model reproduces the agent's tool selection in a single call, without the agent's large system prompt, tool catalog, and orchestration round-trips. Measure prompt-token savings, not parameter count. Pick your student accordingly, and say which one you mean when you present numbers to a customer.
 
-> **Student model choice.** The notebook defaults to `STUDENT_MODEL = "gpt-4.1-mini"`. `gpt-4.1-nano` (version `2025-04-14`) is in `Deprecating` status and Azure **blocks new deployments** of it, so the original nano result is no longer reproducible on a fresh tenant. If a nano-class model is available to you, expect a larger relative lift than the mini numbers above but a lower absolute ceiling.
+> **Student model choice.** The notebook defaults to `STUDENT_MODEL = "gpt-4.1-mini"`. `gpt-4.1-nano` (version `2025-04-14`) is in `Deprecating` status and Azure **blocks new deployments** of it, so the original nano result is no longer reproducible on a fresh tenant. Don't read the nano/mini lift numbers as a comparison between the two students — they were measured on different test sets, and the nano run's smaller lift (+16.5%) reflects its higher baseline, not a weaker result.
 
-> **Test sets differ between runs.** Each datagen pull samples a different slice of trace history, so the baseline moves run to run (we observed 6.82, 7.27 and 7.73 across three pulls of the same agent). Always compare baseline and fine-tuned **within the same run** — the notebook does this by scoring both on one held-out split.
+> **Test sets differ between runs.** Each datagen pull samples a different slice of trace history, so the baseline moves run to run (we observed 6.82, 7.27 and 7.73 across three pulls of the same agent). Always compare baseline and fine-tuned **within the same run** — the notebook does this by scoring both on one held-out split. Quoting a lift number without its baseline is meaningless: run 2 above has the *better* fine-tuned score but the *smaller* lift, purely because it drew an easier test set.
 
 ## Running this in a customer tenant
 
@@ -154,6 +157,22 @@ Full run is ~60 minutes: datagen ~5 min, training ~50 min (queue-dependent), dep
 > The two endpoints are **usually different resources** — see [Running in a customer tenant](#running-this-in-a-customer-tenant). `OPENAI_BASE_URL` must point at the account whose region supports fine-tuning.
 
 > `/openai/v1` paths reject the `api-version` query parameter. Use `openai.OpenAI(...)`, not `AzureOpenAI(...)`. The notebook already does.
+
+### Re-running on a resource you've already used
+
+Azure **will not repoint an existing fine-tuned deployment at a different model**. A second run reaches the deployment cell and fails with:
+
+```
+400 Bad Request
+{"error":{"code":"ModelUpgradeNotSupported",
+          "message":"Model updates are not supported for finetuned model deployments."}}
+```
+
+The notebook handles this: the deployment cell checks what `DEPLOY_NAME` currently points at, deletes it if it's a different model, and waits for the delete to finish before creating. Nothing to do manually — but budget the extra ~2 minutes, and don't be surprised to see a delete in the logs on run 2+.
+
+If you'd rather keep both runs' models live for comparison, change `DEPLOY_NAME` per run instead. Watch the `OpenAI.FineTuned.Deployments` quota (default 10) and remember each live deployment bills continuously.
+
+**Don't gate on inferenceability alone.** While a replacement deployment provisions, the data plane keeps serving the *previous* model under the same deployment name. A readiness check that just calls the endpoint and waits for a 200 therefore passes instantly — against the old model — and the comparison cell then scores the wrong thing without any error. We hit exactly this: the endpoint answered at 0s while ARM still reported `Creating`, and only reached `Succeeded` three minutes *after* the evaluation had already run. The notebook now polls `provisioningState` until `Succeeded` before it probes the endpoint. If you write your own deployment code, do the same — this failure is completely silent, and on a re-run it produces a plausible-looking number for a model you didn't train.
 
 ## Why the transform step exists
 
